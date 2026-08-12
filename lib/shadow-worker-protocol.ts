@@ -11,6 +11,9 @@ interface TransferableHeightGrid {
   metadata: HeightGridMetadata;
   heights: ArrayBuffer;
   validity?: ArrayBuffer;
+  terrainElevations?: ArrayBuffer;
+  minimumSurfaceElevations?: ArrayBuffer;
+  maximumSurfaceElevations?: ArrayBuffer;
 }
 
 export interface ShadowGridInitialiseRequest {
@@ -58,13 +61,36 @@ export function createShadowGridInitialisation(
 ): { message: ShadowGridInitialiseRequest; transfer: Transferable[] } {
   const heights = Uint8Array.from(grid.heights).buffer;
   const validity = grid.validity ? Uint8Array.from(grid.validity).buffer : undefined;
+  const terrainElevations = grid.terrainElevations
+    ? Float32Array.from(grid.terrainElevations).buffer
+    : undefined;
+  const minimumSurfaceElevations = grid.minimumSurfaceElevations
+    ? Float32Array.from(grid.minimumSurfaceElevations).buffer
+    : undefined;
+  const maximumSurfaceElevations = grid.maximumSurfaceElevations
+    ? Float32Array.from(grid.maximumSurfaceElevations).buffer
+    : undefined;
+  const transfer = [
+    heights,
+    validity,
+    terrainElevations,
+    minimumSurfaceElevations,
+    maximumSurfaceElevations,
+  ].filter((buffer): buffer is ArrayBuffer => Boolean(buffer));
   return {
     message: {
       type: SHADOW_GRID_INITIALISE,
       gridVersion,
-      grid: { metadata: grid.metadata, heights, validity },
+      grid: {
+        metadata: grid.metadata,
+        heights,
+        validity,
+        terrainElevations,
+        minimumSurfaceElevations,
+        maximumSurfaceElevations,
+      },
     },
-    transfer: validity ? [heights, validity] : [heights],
+    transfer,
   };
 }
 

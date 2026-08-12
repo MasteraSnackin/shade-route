@@ -6,6 +6,7 @@ import {
   type LabelledRasterScore,
 } from "./raster-shade.ts";
 import type { WalkingRoute } from "./routes.ts";
+import type { WalkingPace } from "./walking-pace.ts";
 
 export type DepartureAdviceProfile = "vulnerable" | "worker";
 
@@ -27,6 +28,8 @@ export interface DepartureAdviceInput {
   profile: DepartureAdviceProfile;
   journeyCount: number;
   repeatEveryMinutes: number;
+  /** Defaults to the routing provider's standard walking duration. */
+  walkingPace?: WalkingPace;
   /** Forward-looking scan length. Defaults to two hours. */
   windowMinutes?: number;
   /** Interval between candidates. Defaults to 15 minutes. */
@@ -233,6 +236,7 @@ export function buildDepartureAdvice({
   profile,
   journeyCount,
   repeatEveryMinutes,
+  walkingPace = "standard",
   windowMinutes: requestedWindowMinutes,
   stepMinutes: requestedStepMinutes,
   minimumSavingSeconds: requestedMinimumSavingSeconds,
@@ -281,6 +285,7 @@ export function buildDepartureAdvice({
           candidateDate,
           journeyCount,
           repeatEveryMinutes,
+          walkingPace,
         ),
       ),
       profile,

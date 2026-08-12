@@ -9,16 +9,26 @@ import { JourneyMode, type JourneyLocationRequestStatus } from "./JourneyMode";
 import { SavedJourneys } from "./SavedJourneys";
 import { FieldFeedback } from "./FieldFeedback";
 import { RouteContextPanel } from "./RouteContextPanel";
+import { LocalPlaceSearch } from "./LocalPlaceSearch";
+import { ShiftExposureTimeline } from "./ShiftExposureTimeline";
+import { DecisionEvidenceDownload } from "./DecisionEvidenceDownload";
 import {
-  buildDepartureAdvice,
-  type DepartureAdviceResult,
-} from "../lib/departure-advice";
+  OfflinePilotPreparation,
+  type OfflinePilotPreparationStatus,
+} from "./OfflinePilotPreparation";
+import type { DepartureAdviceResult } from "../lib/departure-advice";
 import {
-  labelRouteScores,
   loadHeightGrid,
-  scoreRouteSchedule,
   type LabelledRasterScore,
 } from "../lib/raster-shade";
+import {
+  isRouteScoringCancelledError,
+  routeScoringClient,
+} from "../lib/route-scoring-client";
+import {
+  isLiveRouteRequestCancelledError,
+  LiveRouteRequestClient,
+} from "../lib/live-route-client";
 import {
   haversineMetres,
   pointInsideArea,
@@ -36,11 +46,21 @@ import {
 } from "../lib/london-time";
 import { buildJourneySteps } from "../lib/journey-mode";
 import type { SavedJourneySetup } from "../lib/local-journeys";
+import {
+  baseDepartureFromShiftJourney,
+  departureForShiftJourney,
+} from "../lib/shift-timeline";
+import {
+  WALKING_PACE_PRESETS,
+  walkingDurationSeconds,
+  type WalkingPace,
+} from "../lib/walking-pace";
 
 type Profile = "vulnerable" | "worker";
 type Picking = "origin" | "destination" | null;
 
 interface RouteAccessSummary {
+  hasAccessEvidence: boolean;
   hasStairs: boolean;
   hasEscalator: boolean;
   hasUnderground: boolean;
@@ -48,6 +68,18 @@ interface RouteAccessSummary {
   label: string;
   crossingEvidence: "mapped" | "not-mentioned" | "unavailable";
   surfaceEvidence: "rough-flag" | "not-flagged" | "unavailable";
+}
+
+interface ScoreResultState {
+  areaId: PilotArea["id"];
+  routes: WalkingRoute[];
+  departure: string;
+  profile: Profile;
+  journeyCount: number;
+  repeatEveryMinutes: number;
+  walkingPace: WalkingPace;
+  avoidSteps: boolean;
+  scores: LabelledRasterScore[];
 }
 
 function minutes(seconds: number) {
@@ -98,6 +130,7 @@ function routeAccessSummary(route: WalkingRoute): RouteAccessSummary {
   const roughFlag = route.directions.some((direction) => direction.roughSurfaceFlag);
   const barriers = [hasStairs && "stairs", hasEscalator && "escalator"].filter(Boolean);
   return {
+    hasAccessEvidence,
     hasStairs,
     hasEscalator,
     hasUnderground,
@@ -195,10 +228,12 @@ export function ShadeRouteApp() {
     lon: -0.1187,
   });
   const [routes, setRoutes] = useState<WalkingRoute[]>([]);
-  const [scores, setScores] = useState<LabelledRasterScore[]>([]);
+  const [scoreState, setScoreState] = useState<ScoreResultState | null>(null);
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
+  const [selectedJourneyIndex, setSelectedJourneyIndex] = useState(0);
   const [departure, setDeparture] = useState(initialLondonDateTimeValue);
   const [profile, setProfile] = useState<Profile>("vulnerable");
+  const [walkingPace, setWalkingPace] = useState<WalkingPace>("standard");
   const [journeyCount, setJourneyCount] = useState(1);
   const [repeatEveryMinutes, setRepeatEveryMinutes] = useState(120);
   const [avoidSteps, setAvoidSteps] = useState(true);
@@ -218,27 +253,57 @@ export function ShadeRouteApp() {
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [departureAdviceState, setDepartureAdviceState] = useState<{
     key: string;
+    routes: WalkingRoute[];
     advice: DepartureAdviceResult;
   } | null>(null);
   const [departureAdviceErrorKey, setDepartureAdviceErrorKey] = useState<string | null>(null);
   const [online, setOnline] = useState(() => typeof navigator === "undefined" ? true : navigator.onLine);
+  const [offlinePilotStatus, setOfflinePilotStatus] = useState<{
+    areaId: PilotArea["id"];
+    status: OfflinePilotPreparationStatus;
+  } | null>(null);
   const resultsRef = useRef<HTMLElement>(null);
   const calculationGenerationRef = useRef(0);
   const adviceGenerationRef = useRef(0);
+  const liveRouteUiGenerationRef = useRef(0);
   const lastFocusedComparisonRef = useRef(0);
+  const liveRouteClient = useMemo(() => new LiveRouteRequestClient(), []);
 
   const area = useMemo(
     () => data?.areas.find((candidate) => candidate.id === areaId) ?? null,
     [data, areaId],
   );
+  const effectiveJourneyCount = profile === "worker" ? journeyCount : 1;
+  const scores = useMemo(() => scoreState &&
+      scoreState.areaId === area?.id &&
+      scoreState.routes === routes &&
+      scoreState.departure === departure &&
+      scoreState.profile === profile &&
+      scoreState.journeyCount === effectiveJourneyCount &&
+      scoreState.repeatEveryMinutes === repeatEveryMinutes &&
+      scoreState.walkingPace === walkingPace &&
+      scoreState.avoidSteps === avoidSteps
+      ? scoreState.scores
+      : [], [
+    area?.id,
+    avoidSteps,
+    departure,
+    effectiveJourneyCount,
+    profile,
+    repeatEveryMinutes,
+    routes,
+    scoreState,
+    walkingPace,
+  ]);
   const departureAdviceRoutes = useMemo(
     () => avoidSteps
       ? routes.filter((route) => routeAccessSummary(route).avoidsKnownBarriers)
       : routes,
     [avoidSteps, routes],
   );
-  const departureAdviceKey = `${area?.id ?? "none"}|${departureAdviceRoutes.map((route) => route.id).join(",")}|${departure}|${profile}|${journeyCount}|${repeatEveryMinutes}|${avoidSteps}`;
-  const departureAdvice = departureAdviceState?.key === departureAdviceKey
+  const departureAdviceKey = `${area?.id ?? "none"}|${departureAdviceRoutes.map((route) => route.id).join(",")}|${departure}|${profile}|${journeyCount}|${repeatEveryMinutes}|${walkingPace}|${avoidSteps}`;
+  const departureAdvice = departureAdviceState?.key === departureAdviceKey &&
+      departureAdviceState.routes === departureAdviceRoutes
     ? departureAdviceState.advice
     : null;
   const departureAdviceUnavailableForAccess = avoidSteps && routes.length > 0 && departureAdviceRoutes.length === 0;
@@ -252,7 +317,42 @@ export function ShadeRouteApp() {
     [scores, selectedRoute],
   );
   const departureDate = useMemo(() => parseLondonDateTime(departure), [departure]);
-  const mapDepartureDate = inspectionDeparture ?? departureDate;
+  const availableJourneyCount = selectedScore?.journeys.length ?? effectiveJourneyCount;
+  const resolvedJourneyIndex = Math.max(
+    0,
+    Math.min(selectedJourneyIndex, Math.max(0, availableJourneyCount - 1)),
+  );
+  const selectedJourney = selectedScore?.journeys.find(
+    (journey) => journey.index === resolvedJourneyIndex,
+  ) ?? null;
+  const selectedJourneyDepartureDate = useMemo(
+    () => departureDate
+      ? departureForShiftJourney(departureDate, resolvedJourneyIndex, repeatEveryMinutes)
+      : null,
+    [departureDate, repeatEveryMinutes, resolvedJourneyIndex],
+  );
+  const selectedJourneyDepartureValue = selectedJourneyDepartureDate
+    ? londonDateTimeValue(selectedJourneyDepartureDate)
+    : departure;
+  const selectedJourneyDisplayScore = useMemo<LabelledRasterScore | null>(() => {
+    if (!selectedScore || !selectedJourney) return null;
+    return {
+      ...selectedScore,
+      ...selectedJourney.score,
+      journeyCount: 1,
+      walkingPace: selectedScore.walkingPace,
+      journeys: [selectedJourney],
+    };
+  }, [selectedJourney, selectedScore]);
+  const mapScores = useMemo(() => selectedJourneyDisplayScore
+    ? scores.map((score) => score.routeId === selectedJourneyDisplayScore.routeId
+      ? selectedJourneyDisplayScore
+      : score)
+    : scores, [scores, selectedJourneyDisplayScore]);
+  const selectedRouteForPreview = useMemo(() => selectedRoute && selectedJourney
+    ? { ...selectedRoute, durationSeconds: selectedJourney.score.durationSeconds }
+    : selectedRoute, [selectedJourney, selectedRoute]);
+  const mapDepartureDate = inspectionDeparture ?? selectedJourneyDepartureDate;
   const mapTimeLabel = inspectionDeparture
     ? `${new Intl.DateTimeFormat("en-GB", {
         timeZone: "Europe/London",
@@ -263,16 +363,27 @@ export function ShadeRouteApp() {
         minute: "2-digit",
         timeZoneName: "short",
       }).format(inspectionDeparture)} · selected step`
-    : formatLondonDateTime(departure);
+    : resolvedJourneyIndex > 0 && selectedJourneyDepartureDate
+      ? `Journey ${resolvedJourneyIndex + 1} · ${new Intl.DateTimeFormat("en-GB", {
+          timeZone: "Europe/London",
+          weekday: "short",
+          day: "numeric",
+          month: "short",
+          hour: "2-digit",
+          minute: "2-digit",
+          timeZoneName: "short",
+        }).format(selectedJourneyDepartureDate)}`
+      : formatLondonDateTime(departure);
   const activeDirection = activeDirectionIndex === null
     ? null
     : selectedRoute?.directions[activeDirectionIndex] ?? null;
   const activeExposureSection = activeDirection && selectedScore
-    ? selectedScore.sections.find((section) => (
+    ? selectedJourneyDisplayScore?.sections.find((section) => (
         section.routeSegmentIndex >= activeDirection.beginIndex &&
         section.routeSegmentIndex < Math.max(activeDirection.beginIndex + 1, activeDirection.endIndex)
       )) ?? null
     : null;
+
   useEffect(() => {
     const handleOnline = () => setOnline(true);
     const handleOffline = () => setOnline(false);
@@ -283,6 +394,13 @@ export function ShadeRouteApp() {
       window.removeEventListener("offline", handleOffline);
     };
   }, []);
+
+  useEffect(() => () => {
+    routeScoringClient.dispose();
+    // Cancellation is sufficient here and remains safe under React's
+    // development effect replay, which can run cleanup without a true unmount.
+    liveRouteClient.cancel();
+  }, [liveRouteClient]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -330,6 +448,7 @@ export function ShadeRouteApp() {
     activeProfile: Profile,
     count: number,
     interval: number,
+    pace: WalkingPace,
     stepFreeRequested: boolean,
     generation: number,
   ) => {
@@ -337,6 +456,7 @@ export function ShadeRouteApp() {
     if (!date) {
       if (generation === calculationGenerationRef.current) {
         setError("Choose a valid departure date and time.");
+        setLoading(false);
       }
       return;
     }
@@ -346,24 +466,42 @@ export function ShadeRouteApp() {
     try {
       const grid = await loadHeightGrid(activeArea.id);
       if (generation !== calculationGenerationRef.current) return;
-      const scored = activeRoutes.map((route) =>
-        scoreRouteSchedule(route, grid, date, count, interval),
-      );
+      const scored = await routeScoringClient.scoreRoutes({
+        areaId: activeArea.id,
+        grid,
+        routes: activeRoutes,
+        departure: date,
+        profile: activeProfile,
+        journeyCount: count,
+        repeatEveryMinutes: interval,
+        walkingPace: pace,
+      });
       const labelled = applyAccessGuard(
-        labelRouteScores(scored, activeProfile),
+        scored,
         activeRoutes,
         stepFreeRequested,
       );
       if (generation !== calculationGenerationRef.current) return;
-      setScores(labelled);
+      setScoreState({
+        areaId: activeArea.id,
+        routes: activeRoutes,
+        departure: activeDeparture,
+        profile: activeProfile,
+        journeyCount: count,
+        repeatEveryMinutes: interval,
+        walkingPace: pace,
+        avoidSteps: stepFreeRequested,
+        scores: labelled,
+      });
       setSelectedRouteId((current) => {
         if (current && labelled.some((score) => score.routeId === current)) return current;
         return labelled.find((score) => score.labels.includes("recommended"))?.routeId ??
           labelled[0]?.routeId ?? null;
       });
-    } catch {
+    } catch (caught) {
+      if (isRouteScoringCancelledError(caught)) return;
       if (generation !== calculationGenerationRef.current) return;
-      setScores([]);
+      setScoreState(null);
       setError("Shade coverage is unavailable. The ordinary walking routes are still shown.");
     } finally {
       if (generation === calculationGenerationRef.current) setLoading(false);
@@ -380,14 +518,15 @@ export function ShadeRouteApp() {
         routes,
         departure,
         profile,
-        profile === "worker" ? journeyCount : 1,
+        effectiveJourneyCount,
         repeatEveryMinutes,
+        walkingPace,
         avoidSteps,
         generation,
       );
     }, 80);
     return () => window.clearTimeout(timer);
-  }, [area, routes, departure, profile, journeyCount, repeatEveryMinutes, avoidSteps, calculateScores]);
+  }, [area, routes, departure, profile, effectiveJourneyCount, repeatEveryMinutes, walkingPace, avoidSteps, calculateScores]);
 
   useEffect(() => {
     const generation = adviceGenerationRef.current + 1;
@@ -396,33 +535,37 @@ export function ShadeRouteApp() {
     if (!area || !departureAdviceRoutes.length || !date || shadePlaying) return;
     const timer = window.setTimeout(() => {
       void loadHeightGrid(area.id)
-        .then((grid) => buildDepartureAdvice({
+        .then((grid) => routeScoringClient.buildDepartureAdvice({
+          areaId: area.id,
           routes: departureAdviceRoutes,
           grid,
           departure: date,
           profile,
           journeyCount: profile === "worker" ? journeyCount : 1,
           repeatEveryMinutes,
+          walkingPace,
           minimumCoveragePercent: 90,
         }))
         .then((advice) => {
           if (generation === adviceGenerationRef.current) {
-            setDepartureAdviceState({ key: departureAdviceKey, advice });
+            setDepartureAdviceState({ key: departureAdviceKey, routes: departureAdviceRoutes, advice });
             setDepartureAdviceErrorKey(null);
           }
         })
-        .catch(() => {
+        .catch((caught) => {
+          if (isRouteScoringCancelledError(caught)) return;
           if (generation === adviceGenerationRef.current) {
             setDepartureAdviceErrorKey(departureAdviceKey);
           }
         });
     }, 220);
     return () => window.clearTimeout(timer);
-  }, [area, departure, departureAdviceKey, departureAdviceRoutes, journeyCount, profile, repeatEveryMinutes, shadePlaying]);
+  }, [area, departure, departureAdviceKey, departureAdviceRoutes, journeyCount, profile, repeatEveryMinutes, shadePlaying, walkingPace]);
 
   const chooseDepartureAdvice = useCallback((date: Date, routeId: string) => {
     setDeparture(londonDateTimeValue(date));
     setSelectedRouteId(routeId);
+    setSelectedJourneyIndex(0);
     setJourneyModeOpen(false);
     setFeedbackOpen(false);
     setActiveDirectionIndex(null);
@@ -432,25 +575,67 @@ export function ShadeRouteApp() {
 
   const chooseRoute = useCallback((routeId: string) => {
     setSelectedRouteId(routeId);
+    setSelectedJourneyIndex(0);
     setJourneyModeOpen(false);
     setFeedbackOpen(false);
     setActiveDirectionIndex(null);
     setInspectionDeparture(null);
   }, []);
 
+  const invalidateScores = useCallback(() => {
+    calculationGenerationRef.current += 1;
+    adviceGenerationRef.current += 1;
+    liveRouteUiGenerationRef.current += 1;
+    liveRouteClient.cancel();
+    routeScoringClient.cancelScores();
+    routeScoringClient.cancelDepartureAdvice();
+    setScoreState(null);
+    setDepartureAdviceState(null);
+    setDepartureAdviceErrorKey(null);
+    setLoading(false);
+  }, [liveRouteClient]);
+
+  const clearRoutesForEditing = useCallback(() => {
+    invalidateScores();
+    setRoutes([]);
+    setSelectedJourneyIndex(0);
+  }, [invalidateScores]);
+
   const inspectDirection = useCallback((directionIndex: number) => {
-    if (!selectedRoute || !departureDate) return;
-    const steps = buildJourneySteps(selectedRoute);
+    if (!selectedRouteForPreview || !selectedJourneyDepartureDate) return;
+    const steps = buildJourneySteps(selectedRouteForPreview);
     const step = steps[directionIndex];
     if (!step) return;
     setActiveDirectionIndex(directionIndex);
-    setInspectionDeparture(new Date(departureDate.getTime() + step.startOffsetSeconds * 1000));
-  }, [departureDate, selectedRoute]);
+    setInspectionDeparture(new Date(selectedJourneyDepartureDate.getTime() + step.startOffsetSeconds * 1000));
+  }, [selectedJourneyDepartureDate, selectedRouteForPreview]);
 
   const clearDirectionInspection = useCallback(() => {
     setActiveDirectionIndex(null);
     setInspectionDeparture(null);
   }, []);
+
+  const resetScheduledPreview = useCallback(() => {
+    setSelectedJourneyIndex(0);
+    setJourneyModeOpen(false);
+    setFeedbackOpen(false);
+    clearDirectionInspection();
+  }, [clearDirectionInspection]);
+
+  const changeSelectedJourneyDeparture = useCallback((value: string) => {
+    clearDirectionInspection();
+    const selectedInstant = parseLondonDateTime(value);
+    const journeyIndex = resolvedJourneyIndex;
+    if (!selectedInstant || journeyIndex === 0) {
+      setDeparture(value);
+      return;
+    }
+    setDeparture(londonDateTimeValue(baseDepartureFromShiftJourney(
+      selectedInstant,
+      journeyIndex,
+      repeatEveryMinutes,
+    )));
+  }, [clearDirectionInspection, repeatEveryMinutes, resolvedJourneyIndex]);
 
   const requestJourneyPosition = useCallback(() => {
     if (!navigator.geolocation) {
@@ -511,12 +696,14 @@ export function ShadeRouteApp() {
     setDestination(setup.destination);
     setDeparture((current) => combineLondonDateAndTime(current, setup.departureTime));
     setProfile(setup.profile);
+    setWalkingPace(setup.walkingPace ?? "standard");
     setJourneyCount(setup.journeyCount);
     setRepeatEveryMinutes(setup.repeatEveryMinutes);
     setAvoidSteps(setup.avoidSteps);
+    setSelectedJourneyIndex(0);
     const isBundledForwardJourney = pointsMatch(setup.origin, nextArea.start) && pointsMatch(setup.destination, nextArea.destination);
+    invalidateScores();
     setRoutes(isBundledForwardJourney ? nextArea.routes : []);
-    setScores([]);
     setSelectedRouteId(isBundledForwardJourney && setup.preferredRouteId && nextArea.routes.some((route) => route.id === setup.preferredRouteId)
       ? setup.preferredRouteId
       : null);
@@ -530,7 +717,7 @@ export function ShadeRouteApp() {
     setNotice(isBundledForwardJourney
       ? "Saved pilot journey loaded from this device."
       : "Saved custom endpoints loaded from this device. Compare routes to request current alternatives.");
-  }, [data]);
+  }, [data, invalidateScores]);
 
   const chooseArea = useCallback((nextAreaId: PilotArea["id"]) => {
     const nextArea = data?.areas.find((candidate) => candidate.id === nextAreaId);
@@ -538,9 +725,10 @@ export function ShadeRouteApp() {
     setAreaId(nextArea.id);
     setOrigin(nextArea.start);
     setDestination(nextArea.destination);
+    invalidateScores();
     setRoutes(nextArea.routes);
-    setScores([]);
     setSelectedRouteId(null);
+    setSelectedJourneyIndex(0);
     setJourneyModeOpen(false);
     setFeedbackOpen(false);
     setActiveDirectionIndex(null);
@@ -550,7 +738,7 @@ export function ShadeRouteApp() {
     setPlannerCollapsed(window.innerWidth > 760 ? false : true);
     setError(null);
     setNotice("Pilot journey loaded from the local data pack.");
-  }, [data]);
+  }, [data, invalidateScores]);
 
   const handleMapPick = useCallback((coordinate: Coordinate) => {
     if (!area || !picking) return;
@@ -568,15 +756,36 @@ export function ShadeRouteApp() {
     setPicking(null);
     setCustomJourney(true);
     setPlannerCollapsed(false);
-    setRoutes([]);
-    setScores([]);
+    clearRoutesForEditing();
     setJourneyModeOpen(false);
     setFeedbackOpen(false);
     setActiveDirectionIndex(null);
     setInspectionDeparture(null);
     setNotice("Point set. Choose the other point if needed, then compare routes.");
     setError(null);
-  }, [area, picking]);
+  }, [area, clearRoutesForEditing, picking]);
+
+  const chooseLocalPlace = useCallback((target: Exclude<Picking, null>, point: NamedPoint) => {
+    if (!area || !pointInsideArea(point, area)) {
+      setError("Choose a place inside the current pilot area.");
+      return;
+    }
+    const current = target === "origin" ? origin : destination;
+    if (pointsMatch(current, point) && current.name === point.name) return;
+    if (target === "origin") setOrigin(point);
+    else setDestination(point);
+    setPicking(null);
+    setCustomJourney(true);
+    clearRoutesForEditing();
+    setSelectedRouteId(null);
+    setJourneyModeOpen(false);
+    setFeedbackOpen(false);
+    setActiveDirectionIndex(null);
+    setInspectionDeparture(null);
+    setPlannerCollapsed(false);
+    setError(null);
+    setNotice("Bundled local place selected. Compare routes when both endpoints are ready.");
+  }, [area, clearRoutesForEditing, destination, origin]);
 
   const compareRoutes = useCallback(async () => {
     if (!area) return;
@@ -588,7 +797,10 @@ export function ShadeRouteApp() {
     const isForwardPilot = pointsMatch(origin, area.start) && pointsMatch(destination, area.destination);
     const isReversePilot = pointsMatch(origin, area.destination) && pointsMatch(destination, area.start);
     if (isForwardPilot) {
-      setRoutes(area.routes);
+      invalidateScores();
+      // A fresh array also re-runs scoring after a transient height-pack failure.
+      setRoutes([...area.routes]);
+      setSelectedJourneyIndex(0);
       setCustomJourney(false);
       setNotice("Using the loaded pilot routes; no live routing request was needed.");
       setPlannerCollapsed(true);
@@ -596,6 +808,7 @@ export function ShadeRouteApp() {
       return;
     }
     if (isReversePilot) {
+      invalidateScores();
       setRoutes(area.routes.map((route) => ({
         ...route,
         id: `${route.id}-reversed`,
@@ -603,6 +816,7 @@ export function ShadeRouteApp() {
         accessReference: route.directions.map((direction) => direction.instruction).join(" "),
         directions: [],
       })));
+      setSelectedJourneyIndex(0);
       setCustomJourney(false);
       setNotice("Using the loaded pilot routes in reverse. Turn-by-turn steps are hidden for this direction.");
       setPlannerCollapsed(true);
@@ -615,25 +829,23 @@ export function ShadeRouteApp() {
       return;
     }
 
+    const requestGeneration = liveRouteUiGenerationRef.current + 1;
+    liveRouteUiGenerationRef.current = requestGeneration;
     setLoading(true);
     setError(null);
     setNotice(null);
     try {
-      const response = await fetch("/api/route", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          origin: { lat: origin.lat, lon: origin.lon },
-          destination: { lat: destination.lat, lon: destination.lon },
-        }),
+      const result = await liveRouteClient.request({
+        area: { id: area.id, bbox: area.bbox },
+        origin: { lat: origin.lat, lon: origin.lon },
+        destination: { lat: destination.lat, lon: destination.lon },
       });
-      const result = await response.json() as { error?: string; routes?: WalkingRoute[] };
-      if (!response.ok || !result.routes?.length) {
-        throw new Error(result.error ?? "No walkable route was returned.");
-      }
+      if (requestGeneration !== liveRouteUiGenerationRef.current) return;
+      invalidateScores();
       setRoutes(result.routes);
       setCustomJourney(true);
       setSelectedRouteId(null);
+      setSelectedJourneyIndex(0);
       setJourneyModeOpen(false);
       setFeedbackOpen(false);
       setActiveDirectionIndex(null);
@@ -642,17 +854,18 @@ export function ShadeRouteApp() {
       setPlannerCollapsed(true);
       setComparisonFocusSequence((current) => current + 1);
     } catch (caught) {
+      if (isLiveRouteRequestCancelledError(caught)) return;
+      if (requestGeneration !== liveRouteUiGenerationRef.current) return;
       setError(caught instanceof Error ? caught.message : "Walking routes are temporarily unavailable.");
     } finally {
-      setLoading(false);
+      if (requestGeneration === liveRouteUiGenerationRef.current) setLoading(false);
     }
-  }, [area, origin, destination, online]);
+  }, [area, origin, destination, online, invalidateScores, liveRouteClient]);
 
   const reverseJourney = useCallback(() => {
     setOrigin(destination);
     setDestination(origin);
-    setRoutes([]);
-    setScores([]);
+    clearRoutesForEditing();
     setCustomJourney(true);
     setJourneyModeOpen(false);
     setFeedbackOpen(false);
@@ -660,7 +873,7 @@ export function ShadeRouteApp() {
     setInspectionDeparture(null);
     setPlannerCollapsed(false);
     setNotice("Journey reversed. Compare routes to update the result.");
-  }, [origin, destination]);
+  }, [clearRoutesForEditing, origin, destination]);
 
   const useLocation = useCallback(() => {
     if (!navigator.geolocation) {
@@ -685,8 +898,7 @@ export function ShadeRouteApp() {
           setDestination(matchingArea.destination);
         }
         setOrigin(point);
-        setRoutes([]);
-        setScores([]);
+        clearRoutesForEditing();
         setJourneyModeOpen(false);
         setFeedbackOpen(false);
         setActiveDirectionIndex(null);
@@ -698,7 +910,7 @@ export function ShadeRouteApp() {
       () => setError("Location access was not granted. Choose a point on the map instead."),
       { enableHighAccuracy: false, timeout: 8000, maximumAge: 60_000 },
     );
-  }, [data, areaId]);
+  }, [data, areaId, clearRoutesForEditing]);
 
   const fastestScore = useMemo(() => {
     if (!scores.length) return null;
@@ -706,6 +918,20 @@ export function ShadeRouteApp() {
       score.durationSeconds < best.durationSeconds ? score : best,
     );
   }, [scores]);
+
+  const fastestRoute = useMemo(
+    () => routes.find((route) => route.id === fastestScore?.routeId) ?? null,
+    [fastestScore, routes],
+  );
+  const selectedAccess = useMemo(
+    () => selectedRoute ? routeAccessSummary(selectedRoute) : null,
+    [selectedRoute],
+  );
+  const selectedOfflinePilotReady = Boolean(
+    offlinePilotStatus && area &&
+    offlinePilotStatus.areaId === area.id &&
+    offlinePilotStatus.status.phase === "ready",
+  );
 
   const displayedRoutes = useMemo(() => [...routes].sort((left, right) => {
     const leftScore = scores.find((score) => score.routeId === left.id);
@@ -724,14 +950,37 @@ export function ShadeRouteApp() {
   if (!data || !area) {
     return (
       <main className="boot-screen">
-        <div className="boot-mark" aria-hidden="true"><span /></div>
-        <p>{error ?? "Loading the ShadeRoute London data pack…"}</p>
+        <div className="boot-screen__message">
+          <div className="boot-mark" aria-hidden="true"><span /></div>
+          <p role={error ? "alert" : "status"}>
+            {error ?? "Loading the ShadeRoute London data pack…"}
+          </p>
+        </div>
+        {!error && (
+          <div className="boot-skeleton" aria-hidden="true">
+            <div className="boot-skeleton__intro">
+              <span />
+              <span />
+            </div>
+            <div className="boot-skeleton__planner">
+              <span />
+              <span />
+            </div>
+          </div>
+        )}
       </main>
     );
   }
 
   return (
     <div className="site-shell">
+      <a
+        className="skip-link"
+        href="#route-planner"
+        onClick={() => document.getElementById("route-planner")?.focus()}
+      >
+        Skip to journey planner
+      </a>
       <header className="site-header">
         <a className="brand" href="#top" aria-label="ShadeRoute home">
           <span className="brand-mark" aria-hidden="true"><span /></span>
@@ -756,19 +1005,31 @@ export function ShadeRouteApp() {
 
         {!online && (
           <div className="status-banner status-banner-warning" role="status">
-            You are offline. Pilot data already loaded in this session still works; custom routing needs a connection.
+            {selectedOfflinePilotReady
+              ? "You are offline. This bundled pilot pack was verified on this device."
+              : "You are offline. This pilot has not been verified for offline use; only data already loaded in this session may remain available."}
+            {" "}Custom routing and current heat information need a connection.
           </div>
         )}
 
         <HeatContext />
 
-        <section className={`planner${plannerCollapsed ? " is-results-mode" : ""}`} aria-label="Plan a shaded walking route">
+        <section
+          id="route-planner"
+          className={`planner${plannerCollapsed ? " is-results-mode" : ""}`}
+          aria-label="Plan a shaded walking route"
+          tabIndex={-1}
+        >
           <aside className={`planner-controls${plannerCollapsed ? " is-collapsed" : ""}`}>
             <div className="journey-summary">
               <div>
                 <span>Current journey</span>
                 <strong>{origin.name} to {destination.name}</strong>
-                <small>{formatLondonDateTime(departure)} · {profile === "worker" ? `${journeyCount} journeys` : "one journey"}</small>
+                <small>
+                  {formatLondonDateTime(departure)} · {WALKING_PACE_PRESETS[walkingPace].label.toLowerCase()} pace · {profile === "worker" && journeyCount !== 1
+                    ? `${journeyCount} journeys`
+                    : "one journey"}
+                </small>
               </div>
               <button type="button" onClick={() => setPlannerCollapsed(false)}>Edit journey</button>
             </div>
@@ -796,6 +1057,13 @@ export function ShadeRouteApp() {
                   </button>
                 ))}
               </div>
+              <OfflinePilotPreparation
+                key={area.id}
+                areaId={area.id}
+                areaName={area.name}
+                customRoutingActive={customJourney}
+                onStatusChange={(status) => setOfflinePilotStatus({ areaId: area.id, status })}
+              />
             </div>
 
             <div className="control-section">
@@ -806,13 +1074,16 @@ export function ShadeRouteApp() {
               <div className="journey-points">
                 <div className="journey-point-row">
                   <span className="point-letter">A</span>
-                  <div>
-                    <span className="field-label">Start</span>
-                    <strong>{origin.name}</strong>
-                  </div>
+                  <LocalPlaceSearch
+                    area={area}
+                    endpoint={origin}
+                    endpointLabel="Start"
+                    onSelect={(point) => chooseLocalPlace("origin", point)}
+                  />
                   <button
                     type="button"
                     className="text-button"
+                    aria-label={picking === "origin" ? "Cancel choosing the start on the map" : "Choose the start on the map"}
                     aria-pressed={picking === "origin"}
                     onClick={() => setPicking(picking === "origin" ? null : "origin")}
                   >
@@ -822,13 +1093,16 @@ export function ShadeRouteApp() {
                 <button className="reverse-button" type="button" onClick={reverseJourney} aria-label="Reverse start and destination">⇅</button>
                 <div className="journey-point-row">
                   <span className="point-letter point-letter-end">B</span>
-                  <div>
-                    <span className="field-label">Destination</span>
-                    <strong>{destination.name}</strong>
-                  </div>
+                  <LocalPlaceSearch
+                    area={area}
+                    endpoint={destination}
+                    endpointLabel="Destination"
+                    onSelect={(point) => chooseLocalPlace("destination", point)}
+                  />
                   <button
                     type="button"
                     className="text-button"
+                    aria-label={picking === "destination" ? "Cancel choosing the destination on the map" : "Choose the destination on the map"}
                     aria-pressed={picking === "destination"}
                     onClick={() => setPicking(picking === "destination" ? null : "destination")}
                   >
@@ -839,6 +1113,32 @@ export function ShadeRouteApp() {
               <button type="button" className="location-button" onClick={useLocation}>
                 Use my location for the start
               </button>
+              <p className="local-place-note">
+                Place search uses bundled pilot landmarks and partial amenity records only. Use Map to refine an exact point.
+              </p>
+              <div className="departure-field">
+                <label htmlFor="planner-departure">
+                  <span className="field-label">Leave at · London time</span>
+                  <input
+                    id="planner-departure"
+                    type="datetime-local"
+                    value={departure}
+                    onChange={(event) => {
+                      clearDirectionInspection();
+                      setDeparture(event.target.value);
+                    }}
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearDirectionInspection();
+                    setDeparture(londonDateTimeValue(new Date()));
+                  }}
+                >
+                  Now
+                </button>
+              </div>
             </div>
 
             <SavedJourneys
@@ -848,6 +1148,7 @@ export function ShadeRouteApp() {
                 destination,
                 departureTime: departure.slice(11, 16),
                 profile,
+                walkingPace,
                 journeyCount,
                 repeatEveryMinutes,
                 avoidSteps,
@@ -862,10 +1163,8 @@ export function ShadeRouteApp() {
               <label>
                 <span className="field-label">Plan for</span>
                 <select value={profile} onChange={(event) => {
-                  const nextProfile = event.target.value as Profile;
-                  setProfile(nextProfile);
-                  setJourneyCount(nextProfile === "worker" ? 4 : 1);
-                  setAvoidSteps(nextProfile === "vulnerable");
+                  setProfile(event.target.value as Profile);
+                  resetScheduledPreview();
                 }}>
                   <option value="vulnerable">Heat-vulnerable person or carer</option>
                   <option value="worker">Frontline or outdoor worker</option>
@@ -873,6 +1172,31 @@ export function ShadeRouteApp() {
               </label>
             </div>
 
+            <div className="journey-needs-heading">
+              <strong>Journey needs</strong>
+              <span>Set independently of audience.</span>
+            </div>
+            <div className="pace-field">
+              <label htmlFor="walking-pace">
+                <span className="field-label">Modelled walking pace</span>
+                <select
+                  id="walking-pace"
+                  value={walkingPace}
+                  aria-describedby="walking-pace-help"
+                  onChange={(event) => {
+                    setWalkingPace(event.target.value as WalkingPace);
+                    resetScheduledPreview();
+                  }}
+                >
+                  {(Object.keys(WALKING_PACE_PRESETS) as WalkingPace[]).map((pace) => (
+                    <option key={pace} value={pace}>{WALKING_PACE_PRESETS[pace].label}</option>
+                  ))}
+                </select>
+              </label>
+              <small id="walking-pace-help">
+                {WALKING_PACE_PRESETS[walkingPace].description} This is a planning preset, not a measured personal speed.
+              </small>
+            </div>
             <label className="access-option">
               <input
                 type="checkbox"
@@ -888,22 +1212,41 @@ export function ShadeRouteApp() {
 
             {profile === "worker" && (
               <div className="repeat-panel">
-                <p><strong>Repeated journey</strong><span>Estimate exposure across a shift.</span></p>
+                <p><strong>Shift journey pattern</strong><span>Estimate one or more journeys across a shift.</span></p>
                 <label>
                   Journeys
-                  <select value={journeyCount} onChange={(event) => setJourneyCount(Number(event.target.value))}>
-                    {[2, 3, 4, 5, 6, 8].map((value) => <option key={value} value={value}>{value}</option>)}
+                  <select value={journeyCount} onChange={(event) => {
+                    setJourneyCount(Number(event.target.value));
+                    resetScheduledPreview();
+                  }}>
+                    {[1, 2, 3, 4, 5, 6, 8].map((value) => <option key={value} value={value}>{value}</option>)}
                   </select>
                 </label>
                 <label>
                   Every
-                  <select value={repeatEveryMinutes} onChange={(event) => setRepeatEveryMinutes(Number(event.target.value))}>
+                  <select value={repeatEveryMinutes} onChange={(event) => {
+                    setRepeatEveryMinutes(Number(event.target.value));
+                    resetScheduledPreview();
+                  }}>
                     <option value={60}>1 hour</option>
                     <option value={90}>1½ hours</option>
                     <option value={120}>2 hours</option>
                     <option value={180}>3 hours</option>
                   </select>
                 </label>
+                <button
+                  type="button"
+                  className="shift-preset-button"
+                  aria-pressed={journeyCount === 4 && repeatEveryMinutes === 120}
+                  onClick={() => {
+                    setJourneyCount(4);
+                    setRepeatEveryMinutes(120);
+                    resetScheduledPreview();
+                    setNotice("Illustrative four-trip hospital-shift preset loaded. Adjust it to match the real shift.");
+                  }}
+                >
+                  Try illustrative 4-trip hospital shift
+                </button>
               </div>
             )}
 
@@ -911,17 +1254,82 @@ export function ShadeRouteApp() {
               {loading ? "Calculating exposure…" : customJourney || !routes.length ? "Compare walking routes" : "Recalculate routes"}
             </button>
             <p className="privacy-line">
-              Custom coordinates are sent to the routing provider and are not stored by ShadeRoute.
+              Custom coordinates are sent to the routing provider but are not saved automatically or
+              stored on a ShadeRoute server. They are kept in this browser only if you explicitly save the journey.
             </p>
             </div>
           </aside>
 
           <div className="planner-map-column">
+            {routes.length > 0 && (
+              <section className="route-decision-strip" aria-labelledby="route-decision-title">
+                <div className="route-decision-heading">
+                  <div>
+                    <span>Route choice</span>
+                    <h2 id="route-decision-title">Choose a route before exploring the 3D view</h2>
+                  </div>
+                  <p>
+                    Clear-sky model comparison at a {WALKING_PACE_PRESETS[walkingPace].label.toLowerCase()} planning pace,
+                    not a safety guarantee.
+                  </p>
+                </div>
+                <div className="route-decision-options">
+                  {displayedRoutes.map((route) => {
+                    const score = scores.find((candidate) => candidate.routeId === route.id);
+                    const routeIndex = routes.findIndex((candidate) => candidate.id === route.id);
+                    const perJourneyDuration = score
+                      ? score.durationSeconds / Math.max(1, score.journeyCount)
+                      : walkingDurationSeconds(route, walkingPace);
+                    const fastestDuration = Math.min(...routes.map((candidate) => {
+                      const candidateScore = scores.find((value) => value.routeId === candidate.id);
+                      return candidateScore
+                        ? candidateScore.durationSeconds / Math.max(1, candidateScore.journeyCount)
+                        : walkingDurationSeconds(candidate, walkingPace);
+                    }));
+                    const extraMinutes = minutes(perJourneyDuration - fastestDuration);
+                    const routeJourneyCount = profile === "worker" ? journeyCount : 1;
+                    return (
+                      <button
+                        key={route.id}
+                        type="button"
+                        className={route.id === selectedRouteId ? "is-selected" : undefined}
+                        aria-pressed={route.id === selectedRouteId}
+                        onClick={() => chooseRoute(route.id)}
+                      >
+                        <span className="route-decision-option-label">
+                          <i style={{ backgroundColor: ROUTE_COLOURS[routeIndex] }}>{routeIndex + 1}</i>
+                          Option {routeIndex + 1} · {score?.labels.includes("recommended") ? "Suggested trade-off" : extraMinutes === 0 ? "Fastest" : "Alternative"}
+                        </span>
+                        <strong>{descriptiveRouteName(route, routeIndex)}</strong>
+                        <span className="route-decision-metrics">
+                          <b>{minutes(perJourneyDuration)} min</b>
+                          <b>{extraMinutes > 0 ? `+${extraMinutes} min vs fastest` : "No extra time"}</b>
+                        </span>
+                        <span className="route-decision-exposure">
+                          {!score
+                            ? "Calculating modelled exposure…"
+                            : !score.isDaylight
+                              ? "No direct sun at this time"
+                              : `${minutes(score.directSunRangeSeconds[0])}–${minutes(score.directSunRangeSeconds[1])} min potential direct sun${routeJourneyCount > 1 ? ` across ${routeJourneyCount} journeys` : ""}`}
+                        </span>
+                        <small>
+                          {!score
+                            ? "Coverage pending"
+                            : score.isDaylight
+                              ? `${Math.round(score.coveragePercent)}% of daylight journey modelled`
+                              : "Daylight coverage not applicable"}
+                        </small>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
             <div className="map-stage">
               <RouteMap
                 area={area}
                 routes={routes}
-                scores={scores}
+                scores={mapScores}
                 departureDate={mapDepartureDate}
                 timeLabel={mapTimeLabel}
                 selectedRouteId={selectedRouteId}
@@ -935,21 +1343,20 @@ export function ShadeRouteApp() {
               />
               {selectedRoute && (
                 <ShadeTimeExplorer
-                  departure={departure}
-                  formattedDeparture={formatLondonDateTime(departure)}
-                  routeName={descriptiveRouteName(
+                  departure={selectedJourneyDepartureValue}
+                  formattedDeparture={formatLondonDateTime(selectedJourneyDepartureValue)}
+                  routeName={`${descriptiveRouteName(
                     selectedRoute,
                     routes.findIndex((route) => route.id === selectedRoute.id),
-                  )}
+                  )}${selectedScore && selectedScore.journeys.length > 1
+                    ? ` · journey ${resolvedJourneyIndex + 1} of ${selectedScore.journeys.length}`
+                    : ""}`}
                   originName={origin.name}
                   destinationName={destination.name}
                   latitude={(origin.lat + destination.lat) / 2}
                   longitude={(origin.lon + destination.lon) / 2}
-                  score={selectedScore}
-                  onDepartureChange={(value) => {
-                    clearDirectionInspection();
-                    setDeparture(value);
-                  }}
+                  score={selectedJourneyDisplayScore}
+                  onDepartureChange={changeSelectedJourneyDeparture}
                   onPlaybackChange={setShadePlaying}
                 />
               )}
@@ -963,6 +1370,22 @@ export function ShadeRouteApp() {
                 </div>
               )}
             </div>
+            {selectedScore && selectedRoute && (
+              <ShiftExposureTimeline
+                routeName={descriptiveRouteName(
+                  selectedRoute,
+                  routes.findIndex((route) => route.id === selectedRoute.id),
+                )}
+                score={selectedScore}
+                selectedJourneyIndex={resolvedJourneyIndex}
+                onSelectJourney={(index) => {
+                  setSelectedJourneyIndex(index);
+                  setJourneyModeOpen(false);
+                  setFeedbackOpen(false);
+                  clearDirectionInspection();
+                }}
+              />
+            )}
             <div className="map-legend" aria-label="Route map key">
               {routes.map((route, index) => (
                 <button
@@ -1021,7 +1444,9 @@ export function ShadeRouteApp() {
                 <span>Evidence status</span>
                 <strong>
                   {selectedScore
-                    ? `${Math.round(selectedScore.coveragePercent)}% of daylight journey modelled`
+                    ? selectedScore.isDaylight
+                      ? `${Math.round(selectedScore.coveragePercent)}% of daylight journey modelled`
+                      : "Daylight coverage not applicable"
                     : "Calculating route coverage"}
                 </strong>
               </div>
@@ -1033,6 +1458,53 @@ export function ShadeRouteApp() {
                 Suggestions are withheld for low coverage or low sun. The sensitivity band is not a statistical confidence interval.
               </p>
             </aside>
+            {selectedRoute && selectedScore && fastestRoute && departureDate && !loading && selectedAccess && (
+              <DecisionEvidenceDownload
+                input={{
+                  area: { id: area.id, name: area.name },
+                  endpoints: { origin, destination },
+                  selectedRoute,
+                  selectedScore,
+                  fastestRoute,
+                  departure: departureDate,
+                  profile,
+                  walkingPace,
+                  schedule: {
+                    journeyCount: effectiveJourneyCount,
+                    repeatEveryMinutes,
+                  },
+                  access: {
+                    avoidKnownStepsRequested: avoidSteps,
+                    evidenceStatus: selectedAccess.hasAccessEvidence
+                      ? selectedAccess.avoidsKnownBarriers
+                        ? "no-known-barrier-identified"
+                        : "known-barrier-identified"
+                      : "unavailable",
+                    crossingEvidence: selectedAccess.crossingEvidence,
+                    surfaceEvidence: selectedAccess.surfaceEvidence,
+                  },
+                  provenance: {
+                    routeData: {
+                      source: customJourney
+                        ? "OpenStreetMap via the FOSSGIS Valhalla walking-route service"
+                        : "Bundled OpenStreetMap pilot routes generated through Valhalla",
+                      sourceDate: customJourney
+                        ? "Live request at decision time; underlying OpenStreetMap feature dates vary"
+                        : `Pilot pack generated ${data.generated}`,
+                    },
+                    heightData: {
+                      source: "Environment Agency LiDAR Composite 1 metre DSM and DTM",
+                      sourceDate: "Composite surveys 2000–2022",
+                      processedDate: `Pilot pack generated ${data.generated}`,
+                    },
+                    model: {
+                      name: "ShadeRoute absolute-elevation clear-sky model",
+                      version: "prototype-2026-08-12",
+                    },
+                  },
+                }}
+              />
+            )}
             {selectedRoute && (
               <RouteContextPanel
                 areaId={area.id}
@@ -1080,7 +1552,9 @@ export function ShadeRouteApp() {
                 const active = route.id === selectedRouteId;
                 const access = routeAccessSummary(route);
                 const routeJourneyCount = profile === "worker" ? journeyCount : 1;
-                const perJourneyDuration = route.durationSeconds;
+                const perJourneyDuration = score
+                  ? score.durationSeconds / Math.max(1, score.journeyCount)
+                  : walkingDurationSeconds(route, walkingPace);
                 const expectedSun = score ? minutes(score.estimatedDirectSunSeconds) : null;
                 const bestSun = score ? minutes(score.directSunRangeSeconds[0]) : null;
                 const worstSun = score ? minutes(score.directSunRangeSeconds[1]) : null;
@@ -1157,7 +1631,7 @@ export function ShadeRouteApp() {
                             ? "This is the fastest route"
                             : sunDifference > 0
                               ? `About ${sunDifference} fewer min in direct sun`
-                              : "No measured direct-sun saving"}
+                              : "No modelled direct-sun saving"}
                         </strong>
                         <span>
                           {timeDifference > 0 ? `${timeDifference} min extra walking` : "No extra walking time"}
@@ -1197,7 +1671,7 @@ export function ShadeRouteApp() {
                       <button
                         type="button"
                         className="walk-route-button"
-                        disabled={!route.directions.length || !departureDate || !score}
+                        disabled={!route.directions.length || !selectedJourneyDepartureDate || !score}
                         onClick={() => {
                           setJourneyPosition(null);
                           setJourneyLocationStatus("idle");
@@ -1206,7 +1680,7 @@ export function ShadeRouteApp() {
                           window.requestAnimationFrame(() => document.getElementById("journey-mode-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" }));
                         }}
                       >
-                        {route.directions.length ? "Walk this route" : "Walking steps unavailable"}
+                        {route.directions.length ? "Preview walking steps" : "Step preview unavailable"}
                       </button>
                     )}
                   </article>
@@ -1217,7 +1691,7 @@ export function ShadeRouteApp() {
             {selectedRoute && (
               <details className="directions-panel">
                 <summary>
-                  <span>Walking steps for {descriptiveRouteName(selectedRoute, routes.findIndex((route) => route.id === selectedRoute.id))}</span>
+                  <span>Pre-journey steps for {descriptiveRouteName(selectedRoute, routes.findIndex((route) => route.id === selectedRoute.id))}</span>
                   <small>{selectedRoute.directions.length ? `${selectedRoute.directions.length} steps` : "Steps unavailable for this direction"}</small>
                 </summary>
                 {selectedRoute.directions.length > 0 && (
@@ -1246,13 +1720,13 @@ export function ShadeRouteApp() {
               </details>
             )}
 
-            {journeyModeOpen && selectedRoute && selectedScore && departureDate && activeDirectionIndex !== null && (
+            {journeyModeOpen && selectedRouteForPreview && selectedJourneyDisplayScore && selectedJourneyDepartureDate && activeDirectionIndex !== null && (
               <div id="journey-mode-anchor" className="journey-mode-shell">
                 <JourneyMode
-                  route={selectedRoute}
-                  routeName={descriptiveRouteName(selectedRoute, routes.findIndex((route) => route.id === selectedRoute.id))}
-                  score={selectedScore}
-                  departure={departureDate}
+                  route={selectedRouteForPreview}
+                  routeName={descriptiveRouteName(selectedRouteForPreview, routes.findIndex((route) => route.id === selectedRouteForPreview.id))}
+                  score={selectedJourneyDisplayScore}
+                  departure={selectedJourneyDepartureDate}
                   activeDirectionIndex={activeDirectionIndex}
                   onActiveDirectionChange={inspectDirection}
                   onExit={() => {
@@ -1269,17 +1743,18 @@ export function ShadeRouteApp() {
                 {feedbackOpen && (
                   <FieldFeedback
                     context={{
-                      routeId: selectedRoute.id,
-                      routeName: descriptiveRouteName(selectedRoute, routes.findIndex((route) => route.id === selectedRoute.id)),
+                      pilotArea: area.id,
+                      routeId: selectedRouteForPreview.id,
+                      routeName: descriptiveRouteName(selectedRouteForPreview, routes.findIndex((route) => route.id === selectedRouteForPreview.id)),
                       segmentId: `direction-${activeDirectionIndex}`,
                       segmentLabel: activeDirection?.instruction,
                       predictedState: activeExposureSection?.exposure ?? "unknown",
-                      predictedAt: inspectionDeparture?.toISOString() ?? departureDate.toISOString(),
+                      predictedAt: inspectionDeparture?.toISOString() ?? selectedJourneyDepartureDate.toISOString(),
                       location: activeExposureSection
                         ? { latitude: activeExposureSection.start[1], longitude: activeExposureSection.start[0] }
                         : undefined,
                     }}
-                    onSubmitted={() => setNotice("Observation saved on this device for later export.")}
+                    onSubmitted={() => setNotice("Operational section report saved on this device for later export.")}
                   />
                 )}
               </div>

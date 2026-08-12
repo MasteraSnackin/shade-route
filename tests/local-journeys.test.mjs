@@ -71,7 +71,9 @@ test("saved journeys use a versioned, route-setup-only local schema", () => {
     "preferredRouteId",
     "profile",
     "repeatEveryMinutes",
+    "walkingPace",
   ]);
+  assert.equal(persisted.journeys[0].setup.walkingPace, "standard");
   assert.equal("coordinates" in persisted.journeys[0].setup, false);
   assert.equal("journeyHistory" in persisted.journeys[0], false);
 });
@@ -102,6 +104,21 @@ test("saved journeys can be replaced, deleted and cleared without an account", (
   );
   clearLocalJourneys(storage);
   assert.deepEqual(readSavedJourneys(storage), []);
+});
+
+test("saved journeys preserve pace presets and old records default to standard", () => {
+  const storage = memoryStorage();
+  const brisk = saveLocalJourney(
+    { id: "brisk-journey", label: "Brisk", setup: journeySetup({ walkingPace: "brisk" }) },
+    storage,
+  );
+  assert.equal(brisk[0].setup.walkingPace, "brisk");
+
+  storage.setItem(SAVED_JOURNEYS_STORAGE_KEY, JSON.stringify({
+    schemaVersion: 1,
+    journeys: [{ id: "legacy", label: "Legacy", setup: journeySetup() }],
+  }));
+  assert.equal(readSavedJourneys(storage)[0].setup.walkingPace, "standard");
 });
 
 test("unknown or malformed saved-journey schemas are not trusted or silently overwritten", () => {
@@ -232,7 +249,15 @@ test("field feedback discards candidate coordinates by default", () => {
   };
   const record = submitFieldFeedback(
     context,
-    { outcome: "actually-sunny", note: "Temporary works" },
+    {
+      outcome: "actually-sunny",
+      predictionRecordedFirst: true,
+      pavementSide: "left",
+      weatherVisibility: "clear-direct-sun",
+      leafState: "leaf-on",
+      temporaryConditions: "Temporary works",
+      note: "Prediction disagreed",
+    },
     storage,
   );
 
@@ -242,6 +267,11 @@ test("field feedback discards candidate coordinates by default", () => {
   assert.equal("location" in persisted.feedback[0], false);
   assert.equal(fieldFeedbackToJson([record]).includes("latitude"), false);
   assert.equal(fieldFeedbackToCsv([record]).includes("51.501"), false);
+  assert.equal(record.predictionRecordedFirst, true);
+  assert.equal(record.pavementSide, "left");
+  assert.equal(record.weatherVisibility, "clear-direct-sun");
+  assert.equal(record.leafState, "leaf-on");
+  assert.equal(record.temporaryConditions, "Temporary works");
 });
 
 test("field feedback includes coordinates only after explicit consent", () => {
@@ -259,7 +289,7 @@ test("field feedback includes coordinates only after explicit consent", () => {
   assert.equal(record.includeLocation, true);
   assert.deepEqual(record.location, { latitude: 51.501, longitude: -0.116, accuracyMetres: 8 });
   assert.match(fieldFeedbackToJson([record]), /"latitude": 51\.501/);
-  assert.match(fieldFeedbackToCsv([record]), /"51\.501"/);
+  assert.match(fieldFeedbackToCsv([record]), /,51\.501,-0\.116,/);
   assert.throws(
     () => submitFieldFeedback(
       { routeId: "waterloo-2" },
@@ -273,7 +303,7 @@ test("field feedback includes coordinates only after explicit consent", () => {
 test("feedback exports are portable and CSV formula text is neutralised", () => {
   const storage = memoryStorage();
   const first = submitFieldFeedback(
-    { routeId: "waterloo-1", routeName: "Via York Road" },
+    { routeId: "waterloo-1", routeName: "=HYPERLINK(\"unsafe\")" },
     { outcome: "blocked-or-inaccessible", note: "=HYPERLINK(\"unsafe\")" },
     storage,
   );
@@ -289,8 +319,11 @@ test("feedback exports are portable and CSV formula text is neutralised", () => 
   assert.equal(json.schemaVersion, 1);
   assert.equal(json.feedback.length, 2);
   const csv = fieldFeedbackToCsv([first, second]);
-  assert.match(csv, /^"submittedAt","routeId"/);
+  assert.match(csv, /^"report_id","pilot_area","model_section_latitude","model_section_longitude"/);
+  assert.match(csv, /"Route blocked or inaccessible\. =HYPERLINK\(""unsafe""\)"/);
   assert.match(csv, /"'=HYPERLINK\(""unsafe""\)"/);
+  assert.doesNotMatch(csv, /,"[=+@-]/);
+  assert.match(csv, /"estimate_seen_before_report","temporary_conditions","leaf_state"/);
 
   deleteFieldFeedback(first.id, storage);
   assert.equal(readFieldFeedback(storage).length, 1);
@@ -329,6 +362,8 @@ test("local-data components make consent, storage and export behaviour explicit"
   assert.match(savedSource, /Browser storage is unavailable/);
   assert.match(savedSource, /Existing saved-journey data cannot be read/);
   assert.match(savedSource, /onLoad\(journey\.setup, journey\)/);
+  assert.match(savedSource, /resolveWalkingPace\(setup\.walkingPace\)/);
+  assert.match(savedSource, /Modelled pace:.*planning preset/);
   assert.doesNotMatch(savedSource, /fetch\(/);
 
   for (const outcome of [
@@ -342,13 +377,34 @@ test("local-data components make consent, storage and export behaviour explicit"
   }
   assert.match(feedbackSource, /Off by default/);
   assert.match(feedbackSource, /Nothing was sent to a server/);
-  assert.match(feedbackSource, /route section, modelled time, answer and optional note/);
-  assert.match(feedbackSource, /an exported file leaves this browser only if you share it/);
-  assert.match(feedbackSource, /Check\s+the file before sharing it/s);
-  assert.match(feedbackSource, /required/);
+  assert.match(feedbackSource, /Nothing is saved automatically or sent to a server/);
+  assert.match(feedbackSource, /route section,[\s\S]+answer and optional note/);
+  assert.match(feedbackSource, /estimate before checking current conditions/i);
+  assert.match(feedbackSource, /model section&apos;s start, not a device GPS observation/i);
+  assert.match(feedbackSource, /does not make this a fixed-point calibration observation/i);
+  assert.match(feedbackSource, /Side of pavement/);
+  assert.match(feedbackSource, /Sun visibility/);
+  assert.match(feedbackSource, /Leaf state/);
+  assert.match(feedbackSource, /Temporary conditions/);
+  assert.match(feedbackSource, /An exported file leaves this browser[\s\S]+only if you share it/);
+  assert.match(feedbackSource, /Check[\s\S]+the[\s\S]+file before sharing it/);
   assert.match(feedbackSource, /minHeight: 44/);
   assert.doesNotMatch(feedbackSource, /autoFocus/);
   assert.match(feedbackSource, /Export JSON/);
   assert.match(feedbackSource, /Export CSV/);
   assert.doesNotMatch(feedbackSource, /fetch\(/);
+});
+
+test("the canonical calibration sheet stays separate from operational section reports", async () => {
+  const [protocol, observations] = await Promise.all([
+    readFile(new URL("../validation/README.md", import.meta.url), "utf8"),
+    readFile(new URL("../validation/observations.csv", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(protocol, /in-app “Operational field feedback” form is deliberately separate/i);
+  assert.match(protocol, /does[\s\S]+not capture a device GPS observation point/i);
+  assert.match(protocol, /must not be counted as fixed-point calibration observations/i);
+  assert.equal(observations.trim().split("\n").length, 1);
+  assert.equal(observations.trim().split(",").length, 13);
+  assert.doesNotMatch(observations, /route_id|modelled_london_datetime|include_location/);
 });

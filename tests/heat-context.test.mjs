@@ -96,6 +96,8 @@ test("handler declares a fixed official endpoint, bounded timeout and public cac
 
   assert.match(handler, /export async function GET\(\)/);
   assert.match(handler, /UPSTREAM_TIMEOUT_MS\s*=\s*4_000/);
+  assert.match(handler, /MAX_UPSTREAM_RESPONSE_BYTES\s*=\s*256_000/);
+  assert.match(handler, /readBoundedJson\(response, MAX_UPSTREAM_RESPONSE_BYTES\)/);
   assert.match(handler, /new AbortController\(\)/);
   assert.match(handler, /signal:\s*controller\.signal/);
   assert.match(handler, /public, max-age=120, s-maxage=600/);

@@ -1,6 +1,19 @@
 import proj4 from "proj4";
 import * as SunCalc from "suncalc";
 import { haversineMetres, type Coordinate, type WalkingRoute } from "./routes.ts";
+import {
+  walkingDurationSeconds,
+  type WalkingPace,
+} from "./walking-pace.ts";
+
+export {
+  isWalkingPace,
+  resolveWalkingPace,
+  WALKING_PACE_PRESETS,
+  walkingDurationSeconds,
+  type WalkingPace,
+  type WalkingPacePreset,
+} from "./walking-pace.ts";
 
 proj4.defs(
   "EPSG:27700",
@@ -18,6 +31,16 @@ export interface HeightGridMetadata {
   anyCoveragePercent?: number;
   validityFile?: string;
   validityEncoding?: "fraction-255";
+  terrainFile?: string;
+  minimumSurfaceFile?: string;
+  maximumSurfaceFile?: string;
+  elevationEncoding?: "float32-le";
+  elevationAggregation?: string;
+  minimumTerrainElevationMetres?: number;
+  maximumTerrainElevationMetres?: number;
+  minimumSurfaceElevationMetres?: number;
+  maximumSurfaceElevationMetres?: number;
+  clippedLegacyHeightCells?: number;
   source: string;
   sourceDate: string;
   processed: string;
@@ -28,6 +51,11 @@ export interface HeightGrid {
   heights: Uint8Array;
   /** 255 means every source pixel represented by this cell was valid. */
   validity?: Uint8Array;
+  /** Absolute ground elevation above datum, retained so slopes affect ray clearance. */
+  terrainElevations?: Float32Array;
+  /** Minimum and maximum absolute DSM values among the native source pixels in each cell. */
+  minimumSurfaceElevations?: Float32Array;
+  maximumSurfaceElevations?: Float32Array;
 }
 
 export type ExposureState = "sun" | "shade" | "uncertain" | "unknown" | "night";
@@ -36,6 +64,8 @@ export type ConfidenceReason =
   | "low-sun-angle"
   | "incomplete-height-coverage"
   | "near-clearance-threshold"
+  | "subcell-surface-variation"
+  | "ray-search-limit"
   | "unmodelled-passage";
 
 export interface ExposureSection {
@@ -70,8 +100,19 @@ export interface RasterRouteScore {
   sections: ExposureSection[];
 }
 
+export interface ScheduleJourney {
+  /** Zero-based index in the repeated-journey schedule. */
+  index: number;
+  departureEpochMs: number;
+  arrivalEpochMs: number;
+  score: RasterRouteScore;
+}
+
 export interface ScheduleScore extends RasterRouteScore {
   journeyCount: number;
+  walkingPace: WalkingPace;
+  /** Individual journeys retained for shift and repeated-trip presentation. */
+  journeys: ScheduleJourney[];
 }
 
 export type RouteLabel = "recommended" | "least-sun" | "fastest";
@@ -81,13 +122,20 @@ export interface LabelledRasterScore extends ScheduleScore {
   recommendationReason: string | null;
 }
 
-interface RouteSample {
+export interface RouteSample {
   start: Coordinate;
   end: Coordinate;
   midpoint: Coordinate;
+  midpointBng: [easting: number, northing: number];
   lengthMetres: number;
   midpointFraction: number;
   originalSegmentIndex: number;
+}
+
+export interface PreparedRouteGeometry {
+  identity: string;
+  samples: readonly RouteSample[];
+  sampleLengthMetres: number;
 }
 
 interface PointExposureAssessment {
@@ -103,10 +151,24 @@ interface PointExposureAssessment {
 }
 
 const gridCache = new Map<string, Promise<HeightGrid>>();
+const preparedRouteCache = new Map<string, PreparedRouteGeometry>();
+const MAXIMUM_PREPARED_ROUTE_CACHE_ENTRIES = 32;
 const LOW_SUN_ALTITUDE_RADIANS = (3 * Math.PI) / 180;
 const CLEARANCE_MARGIN_METRES = 2;
 const OBSERVER_HEIGHT_METRES = 1.5;
 const MAXIMUM_RAY_DISTANCE_METRES = 250;
+
+function decodeFloat32LittleEndian(buffer: ArrayBuffer) {
+  const view = new DataView(buffer);
+  if (view.byteLength % Float32Array.BYTES_PER_ELEMENT !== 0) {
+    throw new Error("Absolute elevation coverage is incomplete.");
+  }
+  const values = new Float32Array(view.byteLength / Float32Array.BYTES_PER_ELEMENT);
+  for (let index = 0; index < values.length; index += 1) {
+    values[index] = view.getFloat32(index * Float32Array.BYTES_PER_ELEMENT, true);
+  }
+  return values;
+}
 
 export function loadHeightGrid(areaId: string): Promise<HeightGrid> {
   const existing = gridCache.get(areaId);
@@ -118,26 +180,83 @@ export function loadHeightGrid(areaId: string): Promise<HeightGrid> {
       return response.json() as Promise<HeightGridMetadata>;
     })
     .then(async (metadata) => {
-      const [heightResponse, validityResponse] = await Promise.all([
+      const [
+        heightResponse,
+        validityResponse,
+        terrainResponse,
+        minimumSurfaceResponse,
+        maximumSurfaceResponse,
+      ] = await Promise.all([
         fetch(`/data/${areaId}-heights.bin`),
         metadata.validityFile ? fetch(`/data/${metadata.validityFile}`) : Promise.resolve(null),
+        metadata.terrainFile ? fetch(`/data/${metadata.terrainFile}`) : Promise.resolve(null),
+        metadata.minimumSurfaceFile
+          ? fetch(`/data/${metadata.minimumSurfaceFile}`)
+          : Promise.resolve(null),
+        metadata.maximumSurfaceFile
+          ? fetch(`/data/${metadata.maximumSurfaceFile}`)
+          : Promise.resolve(null),
       ]);
       if (!heightResponse.ok) throw new Error("Height coverage is unavailable.");
       if (validityResponse && !validityResponse.ok) {
         throw new Error("Height validity coverage is unavailable.");
       }
+      if (
+        (terrainResponse && !terrainResponse.ok) ||
+        (minimumSurfaceResponse && !minimumSurfaceResponse.ok) ||
+        (maximumSurfaceResponse && !maximumSurfaceResponse.ok)
+      ) {
+        throw new Error("Absolute elevation coverage is unavailable.");
+      }
+      const hasCompleteAbsoluteFiles = Boolean(
+        terrainResponse && minimumSurfaceResponse && maximumSurfaceResponse,
+      );
+      if (
+        Boolean(terrainResponse) !== hasCompleteAbsoluteFiles ||
+        Boolean(minimumSurfaceResponse) !== hasCompleteAbsoluteFiles ||
+        Boolean(maximumSurfaceResponse) !== hasCompleteAbsoluteFiles
+      ) {
+        throw new Error("Absolute elevation metadata is incomplete.");
+      }
       const heights = new Uint8Array(await heightResponse.arrayBuffer());
       const validity = validityResponse
         ? new Uint8Array(await validityResponse.arrayBuffer())
         : undefined;
+      const terrainElevations = terrainResponse
+        ? decodeFloat32LittleEndian(await terrainResponse.arrayBuffer())
+        : undefined;
+      const minimumSurfaceElevations = minimumSurfaceResponse
+        ? decodeFloat32LittleEndian(await minimumSurfaceResponse.arrayBuffer())
+        : undefined;
+      const maximumSurfaceElevations = maximumSurfaceResponse
+        ? decodeFloat32LittleEndian(await maximumSurfaceResponse.arrayBuffer())
+        : undefined;
       const expectedLength = metadata.width * metadata.height;
-      if (heights.length !== expectedLength || (validity && validity.length !== expectedLength)) {
+      if (
+        heights.length !== expectedLength ||
+        (validity && validity.length !== expectedLength) ||
+        (terrainElevations && terrainElevations.length !== expectedLength) ||
+        (minimumSurfaceElevations && minimumSurfaceElevations.length !== expectedLength) ||
+        (maximumSurfaceElevations && maximumSurfaceElevations.length !== expectedLength)
+      ) {
         throw new Error("Height coverage is incomplete.");
       }
-      return { metadata, heights, validity };
+      return {
+        metadata,
+        heights,
+        validity,
+        terrainElevations,
+        minimumSurfaceElevations,
+        maximumSurfaceElevations,
+      };
     });
 
   gridCache.set(areaId, pending);
+  void pending.catch(() => {
+    // A temporary network/cache failure must not poison every later retry.
+    // Identity guards against an old rejected request evicting a newer one.
+    if (gridCache.get(areaId) === pending) gridCache.delete(areaId);
+  });
   return pending;
 }
 
@@ -145,14 +264,52 @@ export function longitudeLatitudeToBng(coordinate: Coordinate): [number, number]
   return proj4("EPSG:4326", "EPSG:27700", coordinate) as [number, number];
 }
 
-function heightAt(grid: HeightGrid, easting: number, northing: number) {
-  const { bboxBng, resolutionMetres, width, height, heightStepMetres } = grid.metadata;
+function gridIndexAt(grid: HeightGrid, easting: number, northing: number) {
+  const { bboxBng, resolutionMetres, width, height } = grid.metadata;
   const x = Math.floor((easting - bboxBng[0]) / resolutionMetres);
   const y = Math.floor((bboxBng[3] - northing) / resolutionMetres);
   if (x < 0 || y < 0 || x >= width || y >= height) return null;
   const index = y * width + x;
   if (grid.validity && grid.validity[index] !== 255) return null;
+  return index;
+}
+
+function heightAt(grid: HeightGrid, easting: number, northing: number) {
+  const index = gridIndexAt(grid, easting, northing);
+  if (index === null) return null;
+  const { heightStepMetres } = grid.metadata;
   return grid.heights[index] * heightStepMetres;
+}
+
+interface AbsoluteElevationEnvelope {
+  terrain: number;
+  minimumSurface: number;
+  maximumSurface: number;
+}
+
+function absoluteElevationAt(
+  grid: HeightGrid,
+  easting: number,
+  northing: number,
+): AbsoluteElevationEnvelope | null {
+  if (
+    !grid.terrainElevations ||
+    !grid.minimumSurfaceElevations ||
+    !grid.maximumSurfaceElevations
+  ) {
+    return null;
+  }
+  const index = gridIndexAt(grid, easting, northing);
+  if (index === null) return null;
+  const terrain = grid.terrainElevations[index];
+  const minimumSurface = grid.minimumSurfaceElevations[index];
+  const maximumSurface = grid.maximumSurfaceElevations[index];
+  return Number.isFinite(terrain) &&
+    Number.isFinite(minimumSurface) &&
+    Number.isFinite(maximumSurface) &&
+    minimumSurface <= maximumSurface
+    ? { terrain, minimumSurface, maximumSurface }
+    : null;
 }
 
 function densifyRoute(coordinates: Coordinate[], intervalMetres = 8): RouteSample[] {
@@ -189,6 +346,7 @@ function densifyRoute(coordinates: Coordinate[], intervalMetres = 8): RouteSampl
         start: from,
         end: to,
         midpoint,
+        midpointBng: longitudeLatitudeToBng(midpoint),
         lengthMetres,
         midpointFraction: totalLength
           ? (travelled + segmentLength * midpointFractionOnSegment) / totalLength
@@ -199,6 +357,43 @@ function densifyRoute(coordinates: Coordinate[], intervalMetres = 8): RouteSampl
     travelled += segmentLength;
   }
   return samples;
+}
+
+function routeGeometryIdentity(coordinates: Coordinate[], intervalMetres: number) {
+  return `${intervalMetres}|${coordinates
+    .map(([longitude, latitude]) => `${longitude},${latitude}`)
+    .join(";")}`;
+}
+
+/**
+ * Densify and project a route once. Time scans reuse this immutable geometry,
+ * while the small LRU cache bounds retained live-route data.
+ */
+export function prepareRouteGeometry(
+  route: WalkingRoute,
+  intervalMetres = 8,
+): PreparedRouteGeometry {
+  const identity = routeGeometryIdentity(route.coordinates, intervalMetres);
+  const cached = preparedRouteCache.get(identity);
+  if (cached) {
+    preparedRouteCache.delete(identity);
+    preparedRouteCache.set(identity, cached);
+    return cached;
+  }
+
+  const samples = densifyRoute(route.coordinates, intervalMetres);
+  const prepared: PreparedRouteGeometry = {
+    identity,
+    samples,
+    sampleLengthMetres: samples.reduce((sum, sample) => sum + sample.lengthMetres, 0),
+  };
+  preparedRouteCache.set(identity, prepared);
+  while (preparedRouteCache.size > MAXIMUM_PREPARED_ROUTE_CACHE_ENTRIES) {
+    const oldestIdentity = preparedRouteCache.keys().next().value;
+    if (oldestIdentity === undefined) break;
+    preparedRouteCache.delete(oldestIdentity);
+  }
+  return prepared;
 }
 
 function clamp(value: number, low: number, high: number) {
@@ -214,6 +409,7 @@ export function assessPointExposure(
   coordinate: Coordinate,
   date: Date,
   grid: HeightGrid,
+  projectedCoordinate: [easting: number, northing: number] = longitudeLatitudeToBng(coordinate),
 ): PointExposureAssessment {
   const position = SunCalc.getPosition(date, coordinate[1], coordinate[0]);
   // SunCalc v2 returns degrees, with azimuth clockwise from north.
@@ -234,8 +430,19 @@ export function assessPointExposure(
 
   const lowSun = altitude < LOW_SUN_ALTITUDE_RADIANS;
   const lowSunReasons: ConfidenceReason[] = lowSun ? ["low-sun-angle"] : [];
-  const [easting, northing] = longitudeLatitudeToBng(coordinate);
-  if (heightAt(grid, easting, northing) === null) {
+  const [easting, northing] = projectedCoordinate;
+  const usesAbsoluteElevations = Boolean(
+    grid.terrainElevations &&
+    grid.minimumSurfaceElevations &&
+    grid.maximumSurfaceElevations,
+  );
+  const originElevation = usesAbsoluteElevations
+    ? absoluteElevationAt(grid, easting, northing)
+    : null;
+  if (
+    (usesAbsoluteElevations && originElevation === null) ||
+    (!usesAbsoluteElevations && heightAt(grid, easting, northing) === null)
+  ) {
     return {
       shadeFraction: null,
       guaranteedShade: false,
@@ -255,15 +462,27 @@ export function assessPointExposure(
   const eastDirection = Math.sin(azimuth);
   const northDirection = Math.cos(azimuth);
   const tangent = Math.tan(altitude);
-  const maximumEncodedHeight = 255 * grid.metadata.heightStepMetres;
+  const maximumPotentialHeight = usesAbsoluteElevations && originElevation
+    ? Math.max(
+        0,
+        (grid.metadata.maximumSurfaceElevationMetres ?? originElevation.maximumSurface) -
+          originElevation.terrain,
+      )
+    : 255 * grid.metadata.heightStepMetres;
+  const naturalMaximumRayDistance = Math.max(
+    grid.metadata.resolutionMetres,
+    (maximumPotentialHeight - OBSERVER_HEIGHT_METRES) / tangent,
+  );
   const maximumRayDistance = Math.min(
     MAXIMUM_RAY_DISTANCE_METRES,
-    Math.max(
-      grid.metadata.resolutionMetres,
-      (maximumEncodedHeight - OBSERVER_HEIGHT_METRES) / tangent,
-    ),
+    naturalMaximumRayDistance,
   );
-  let bestClearance = Number.NEGATIVE_INFINITY;
+  const rayWasSearchLimited = usesAbsoluteElevations &&
+    naturalMaximumRayDistance > MAXIMUM_RAY_DISTANCE_METRES;
+  let bestCertainClearance = Number.NEGATIVE_INFINITY;
+  let bestExpectedClearance = Number.NEGATIVE_INFINITY;
+  let bestPossibleClearance = Number.NEGATIVE_INFINITY;
+  let surfaceEnvelopeAffectedResult = false;
   let rayComplete = true;
 
   for (
@@ -271,23 +490,46 @@ export function assessPointExposure(
     distance <= maximumRayDistance;
     distance += grid.metadata.resolutionMetres
   ) {
-    const obstacleHeight = heightAt(
-      grid,
-      easting + eastDirection * distance,
-      northing + northDirection * distance,
-    );
-    if (obstacleHeight === null) {
-      rayComplete = false;
-      break;
+    const sampleEasting = easting + eastDirection * distance;
+    const sampleNorthing = northing + northDirection * distance;
+    if (usesAbsoluteElevations && originElevation) {
+      const envelope = absoluteElevationAt(grid, sampleEasting, sampleNorthing);
+      if (!envelope) {
+        rayComplete = false;
+        break;
+      }
+      const requiredElevation =
+        originElevation.terrain + OBSERVER_HEIGHT_METRES + distance * tangent;
+      const certainClearance = envelope.minimumSurface - requiredElevation;
+      const possibleClearance = envelope.maximumSurface - requiredElevation;
+      const expectedClearance =
+        (envelope.minimumSurface + envelope.maximumSurface) / 2 - requiredElevation;
+      bestCertainClearance = Math.max(bestCertainClearance, certainClearance);
+      bestExpectedClearance = Math.max(bestExpectedClearance, expectedClearance);
+      bestPossibleClearance = Math.max(bestPossibleClearance, possibleClearance);
+      surfaceEnvelopeAffectedResult ||=
+        possibleClearance >= -CLEARANCE_MARGIN_METRES &&
+        certainClearance < CLEARANCE_MARGIN_METRES &&
+        envelope.maximumSurface - envelope.minimumSurface > CLEARANCE_MARGIN_METRES;
+    } else {
+      const obstacleHeight = heightAt(grid, sampleEasting, sampleNorthing);
+      if (obstacleHeight === null) {
+        rayComplete = false;
+        break;
+      }
+      const requiredHeight = OBSERVER_HEIGHT_METRES + distance * tangent;
+      const clearance = obstacleHeight - requiredHeight;
+      bestCertainClearance = Math.max(bestCertainClearance, clearance);
+      bestExpectedClearance = Math.max(bestExpectedClearance, clearance);
+      bestPossibleClearance = Math.max(bestPossibleClearance, clearance);
     }
-    const requiredHeight = OBSERVER_HEIGHT_METRES + distance * tangent;
-    bestClearance = Math.max(bestClearance, obstacleHeight - requiredHeight);
     // Once an observed object clears the ray by the full uncertainty margin,
     // farther raster cells are no longer relevant to the shade classification.
-    if (bestClearance >= CLEARANCE_MARGIN_METRES) break;
+    if (bestCertainClearance >= CLEARANCE_MARGIN_METRES) break;
   }
 
-  const guaranteedShade = bestClearance >= CLEARANCE_MARGIN_METRES;
+  const guaranteedShade = bestCertainClearance >= CLEARANCE_MARGIN_METRES;
+  if (rayWasSearchLimited && !guaranteedShade) rayComplete = false;
   if (!rayComplete && !guaranteedShade) {
     return {
       shadeFraction: null,
@@ -298,13 +540,16 @@ export function assessPointExposure(
       covered: false,
       exposure: "unknown",
       rayCoverage: "incomplete",
-      confidenceReasons: [...lowSunReasons, "incomplete-height-coverage"],
+      confidenceReasons: uniqueReasons([
+        ...lowSunReasons,
+        rayWasSearchLimited ? "ray-search-limit" : "incomplete-height-coverage",
+      ]),
     };
   }
 
-  const possibleShade = bestClearance >= -CLEARANCE_MARGIN_METRES;
+  const possibleShade = bestPossibleClearance >= -CLEARANCE_MARGIN_METRES;
   const shadeFraction = clamp(
-    (bestClearance + CLEARANCE_MARGIN_METRES) / (2 * CLEARANCE_MARGIN_METRES),
+    (bestExpectedClearance + CLEARANCE_MARGIN_METRES) / (2 * CLEARANCE_MARGIN_METRES),
     0,
     1,
   );
@@ -316,6 +561,7 @@ export function assessPointExposure(
   const confidenceReasons: ConfidenceReason[] = [
     ...lowSunReasons,
     ...(exposure === "uncertain" ? (["near-clearance-threshold"] as const) : []),
+    ...(surfaceEnvelopeAffectedResult ? (["subcell-surface-variation"] as const) : []),
   ];
   return {
     shadeFraction,
@@ -346,9 +592,12 @@ export function scoreRouteAgainstGrid(
   route: WalkingRoute,
   grid: HeightGrid,
   departure: Date,
+  preparedGeometry: PreparedRouteGeometry = prepareRouteGeometry(route),
+  walkingPace: WalkingPace = "standard",
 ): RasterRouteScore {
-  const samples = densifyRoute(route.coordinates);
-  const sampleLength = samples.reduce((sum, sample) => sum + sample.lengthMetres, 0);
+  const samples = preparedGeometry.samples;
+  const sampleLength = preparedGeometry.sampleLengthMetres;
+  const durationSeconds = walkingDurationSeconds(route, walkingPace);
   let daylightSeconds = 0;
   let expectedShadeSeconds = 0;
   let guaranteedShadeSeconds = 0;
@@ -361,12 +610,12 @@ export function scoreRouteAgainstGrid(
 
   for (const sample of samples) {
     const duration = sampleLength
-      ? (sample.lengthMetres / sampleLength) * route.durationSeconds
+      ? (sample.lengthMetres / sampleLength) * durationSeconds
       : 0;
     const sampleDate = new Date(
-      departure.getTime() + sample.midpointFraction * route.durationSeconds * 1000,
+      departure.getTime() + sample.midpointFraction * durationSeconds * 1000,
     );
-    let shade = assessPointExposure(sample.midpoint, sampleDate, grid);
+    let shade = assessPointExposure(sample.midpoint, sampleDate, grid, sample.midpointBng);
     if (shade.daylight && sampleUsesUnmodelledPassage(route, sample)) {
       shade = {
         ...shade,
@@ -415,7 +664,7 @@ export function scoreRouteAgainstGrid(
   return {
     routeId: route.id,
     distanceMetres: route.distanceMetres,
-    durationSeconds: route.durationSeconds,
+    durationSeconds,
     estimatedDirectSunSeconds,
     directSunRangeSeconds: [bestCase, worstCase],
     estimatedShadePercent: daylightSeconds
@@ -438,9 +687,11 @@ export function scoreRouteAgainstGrid(
 /** Combines journey scores using daylight duration, rather than averaging percentages. */
 export function aggregateScheduleScores(
   route: WalkingRoute,
-  scores: RasterRouteScore[],
+  journeys: ScheduleJourney[],
+  walkingPace: WalkingPace = "standard",
 ): ScheduleScore {
-  if (!scores.length) throw new Error("At least one journey score is required.");
+  if (!journeys.length) throw new Error("At least one journey score is required.");
+  const scores = journeys.map((journey) => journey.score);
   const expectedSun = scores.reduce((sum, score) => sum + score.estimatedDirectSunSeconds, 0);
   const bestCase = scores.reduce((sum, score) => sum + score.directSunRangeSeconds[0], 0);
   const worstCase = scores.reduce((sum, score) => sum + score.directSunRangeSeconds[1], 0);
@@ -457,7 +708,7 @@ export function aggregateScheduleScores(
   const reasons = uniqueReasons(scores.flatMap((score) => score.confidenceReasons));
   return {
     ...scores[0],
-    durationSeconds: route.durationSeconds * scores.length,
+    durationSeconds: scores.reduce((sum, score) => sum + score.durationSeconds, 0),
     distanceMetres: route.distanceMetres * scores.length,
     estimatedDirectSunSeconds: expectedSun,
     directSunRangeSeconds: [bestCase, worstCase],
@@ -476,6 +727,8 @@ export function aggregateScheduleScores(
       : 100,
     sections: scores[0].sections,
     journeyCount: scores.length,
+    walkingPace,
+    journeys,
   };
 }
 
@@ -485,17 +738,28 @@ export function scoreRouteSchedule(
   departure: Date,
   journeyCount: number,
   repeatEveryMinutes: number,
+  walkingPace: WalkingPace = "standard",
 ): ScheduleScore {
   const count = Math.max(1, Math.floor(journeyCount));
   const repeatMinutes = Number.isFinite(repeatEveryMinutes) ? repeatEveryMinutes : 0;
-  const scores = Array.from({ length: count }, (_, index) =>
-    scoreRouteAgainstGrid(
+  const preparedGeometry = prepareRouteGeometry(route);
+  const journeys = Array.from({ length: count }, (_, index) => {
+    const journeyDeparture = new Date(departure.getTime() + index * repeatMinutes * 60_000);
+    const score = scoreRouteAgainstGrid(
       route,
       grid,
-      new Date(departure.getTime() + index * repeatMinutes * 60_000),
-    ),
-  );
-  return aggregateScheduleScores(route, scores);
+      journeyDeparture,
+      preparedGeometry,
+      walkingPace,
+    );
+    return {
+      index,
+      departureEpochMs: journeyDeparture.getTime(),
+      arrivalEpochMs: journeyDeparture.getTime() + score.durationSeconds * 1000,
+      score,
+    };
+  });
+  return aggregateScheduleScores(route, journeys, walkingPace);
 }
 
 function perJourneyDuration(score: ScheduleScore) {

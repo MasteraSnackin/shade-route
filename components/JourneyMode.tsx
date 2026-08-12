@@ -140,11 +140,11 @@ export function JourneyMode({
       <header className="journey-mode__header">
         <div>
           <span className="journey-mode__eyebrow">Route reference</span>
-          <h2 id="journey-mode-title">Walk this route</h2>
+          <h2 id="journey-mode-title">Preview walking steps</h2>
           {routeName ? <p className="journey-mode__route-name">{routeName}</p> : null}
         </div>
         <button type="button" className="journey-mode__exit" onClick={exitJourneyMode}>
-          Exit
+          Close preview
         </button>
       </header>
 

@@ -60,6 +60,15 @@ workerScope.onmessage = (event) => {
       metadata: request.grid.metadata,
       heights: new Uint8Array(request.grid.heights),
       validity: request.grid.validity ? new Uint8Array(request.grid.validity) : undefined,
+      terrainElevations: request.grid.terrainElevations
+        ? new Float32Array(request.grid.terrainElevations)
+        : undefined,
+      minimumSurfaceElevations: request.grid.minimumSurfaceElevations
+        ? new Float32Array(request.grid.minimumSurfaceElevations)
+        : undefined,
+      maximumSurfaceElevations: request.grid.maximumSurfaceElevations
+        ? new Float32Array(request.grid.maximumSurfaceElevations)
+        : undefined,
     };
     activeGridVersion = request.gridVersion;
     return;

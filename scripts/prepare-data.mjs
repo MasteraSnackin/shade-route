@@ -691,6 +691,14 @@ function validElevation(value, noData) {
   return Number.isFinite(value) && value > -1000 && value !== noData;
 }
 
+function float32LittleEndianBuffer(values) {
+  const buffer = Buffer.allocUnsafe(values.length * Float32Array.BYTES_PER_ELEMENT);
+  for (let index = 0; index < values.length; index += 1) {
+    buffer.writeFloatLE(values[index], index * Float32Array.BYTES_PER_ELEMENT);
+  }
+  return buffer;
+}
+
 async function prepareHeightGrid(area) {
   const [dsm, dtm] = await Promise.all(area.gridFiles.map(readRaster));
   if (
@@ -705,12 +713,27 @@ async function prepareHeightGrid(area) {
   const height = Math.ceil(dsm.height / DOWNSAMPLE);
   const quantizedHeights = new Uint8Array(width * height);
   const validity = new Uint8Array(width * height);
+  const terrainElevations = new Float32Array(width * height);
+  const minimumSurfaceElevations = new Float32Array(width * height);
+  const maximumSurfaceElevations = new Float32Array(width * height);
+  terrainElevations.fill(Number.NaN);
+  minimumSurfaceElevations.fill(Number.NaN);
+  maximumSurfaceElevations.fill(Number.NaN);
   let anyCovered = 0;
   let completelyCovered = 0;
+  let clippedHeightCells = 0;
+  let minimumTerrainElevationMetres = Number.POSITIVE_INFINITY;
+  let maximumTerrainElevationMetres = Number.NEGATIVE_INFINITY;
+  let minimumSurfaceElevationMetres = Number.POSITIVE_INFINITY;
+  let maximumSurfaceElevationMetres = Number.NEGATIVE_INFINITY;
 
   for (let targetY = 0; targetY < height; targetY += 1) {
     for (let targetX = 0; targetX < width; targetX += 1) {
       let maximumHeight = 0;
+      let minimumTerrain = Number.POSITIVE_INFINITY;
+      let maximumTerrain = Number.NEGATIVE_INFINITY;
+      let minimumSurface = Number.POSITIVE_INFINITY;
+      let maximumSurface = Number.NEGATIVE_INFINITY;
       let validPairs = 0;
       let sourcePixels = 0;
       const startY = targetY * DOWNSAMPLE;
@@ -726,6 +749,10 @@ async function prepareHeightGrid(area) {
             continue;
           }
           validPairs += 1;
+          minimumTerrain = Math.min(minimumTerrain, terrain);
+          maximumTerrain = Math.max(maximumTerrain, terrain);
+          minimumSurface = Math.min(minimumSurface, surface);
+          maximumSurface = Math.max(maximumSurface, surface);
           maximumHeight = Math.max(maximumHeight, surface - terrain);
         }
       }
@@ -736,15 +763,39 @@ async function prepareHeightGrid(area) {
       validity[targetIndex] = sourcePixels
         ? Math.round((validPairs / sourcePixels) * 255)
         : 0;
+      const quantizedHeight = Math.round(maximumHeight / HEIGHT_STEP_METRES);
+      if (quantizedHeight > 255) clippedHeightCells += 1;
       quantizedHeights[targetIndex] = Math.max(
         0,
-        Math.min(255, Math.round(maximumHeight / HEIGHT_STEP_METRES)),
+        Math.min(255, quantizedHeight),
       );
+      if (validPairs > 0) {
+        const terrainMidpoint = (minimumTerrain + maximumTerrain) / 2;
+        terrainElevations[targetIndex] = terrainMidpoint;
+        minimumSurfaceElevations[targetIndex] = minimumSurface;
+        maximumSurfaceElevations[targetIndex] = maximumSurface;
+        minimumTerrainElevationMetres = Math.min(minimumTerrainElevationMetres, minimumTerrain);
+        maximumTerrainElevationMetres = Math.max(maximumTerrainElevationMetres, maximumTerrain);
+        minimumSurfaceElevationMetres = Math.min(minimumSurfaceElevationMetres, minimumSurface);
+        maximumSurfaceElevationMetres = Math.max(maximumSurfaceElevationMetres, maximumSurface);
+      }
     }
   }
 
   await fs.writeFile(path.join(publicDirectory, `${area.id}-heights.bin`), quantizedHeights);
   await fs.writeFile(path.join(publicDirectory, `${area.id}-validity.bin`), validity);
+  await fs.writeFile(
+    path.join(publicDirectory, `${area.id}-terrain.bin`),
+    float32LittleEndianBuffer(terrainElevations),
+  );
+  await fs.writeFile(
+    path.join(publicDirectory, `${area.id}-surface-min.bin`),
+    float32LittleEndianBuffer(minimumSurfaceElevations),
+  );
+  await fs.writeFile(
+    path.join(publicDirectory, `${area.id}-surface-max.bin`),
+    float32LittleEndianBuffer(maximumSurfaceElevations),
+  );
   await fs.writeFile(
     path.join(publicDirectory, `${area.id}-heights.json`),
     JSON.stringify({
@@ -758,7 +809,17 @@ async function prepareHeightGrid(area) {
       anyCoveragePercent: Math.round((anyCovered / quantizedHeights.length) * 1000) / 10,
       validityFile: `${area.id}-validity.bin`,
       validityEncoding: "fraction-255",
-      source: "Environment Agency LIDAR Composite 1m DSM minus DTM",
+      terrainFile: `${area.id}-terrain.bin`,
+      minimumSurfaceFile: `${area.id}-surface-min.bin`,
+      maximumSurfaceFile: `${area.id}-surface-max.bin`,
+      elevationEncoding: "float32-le",
+      elevationAggregation: "4m cells: midpoint of 1m DTM range with minimum and maximum 1m DSM envelope",
+      minimumTerrainElevationMetres,
+      maximumTerrainElevationMetres,
+      minimumSurfaceElevationMetres,
+      maximumSurfaceElevationMetres,
+      clippedLegacyHeightCells: clippedHeightCells,
+      source: "Environment Agency LIDAR Composite 1m DSM and DTM",
       sourceDate: "Composite surveys 2000–2022",
       processed: "2026-08-12",
     }),
@@ -771,6 +832,9 @@ async function prepareHeightGrid(area) {
     heightStepMetres: HEIGHT_STEP_METRES,
     values: quantizedHeights,
     validity,
+    terrainElevations,
+    minimumSurfaceElevations,
+    maximumSurfaceElevations,
   };
 }
 

@@ -11,6 +11,7 @@ import {
   type SavedJourney,
   type SavedJourneySetup,
 } from "../lib/local-journeys";
+import { WALKING_PACE_PRESETS, resolveWalkingPace } from "../lib/walking-pace";
 
 const SAVED_JOURNEYS_CHANGE_EVENT = "shaderoute:saved-journeys-change";
 const STORAGE_UNAVAILABLE_SNAPSHOT = "__shaderoute_storage_unavailable__";
@@ -46,6 +47,11 @@ function subscribeToSavedJourneys(onChange: () => void) {
 
 function announceSavedJourneysChange() {
   window.dispatchEvent(new Event(SAVED_JOURNEYS_CHANGE_EVENT));
+}
+
+function planningPaceLabel(setup: SavedJourneySetup) {
+  const pace = resolveWalkingPace(setup.walkingPace);
+  return `Modelled pace: ${WALKING_PACE_PRESETS[pace].label} (planning preset)`;
 }
 
 export function SavedJourneys({
@@ -166,6 +172,7 @@ export function SavedJourneys({
                 <small>
                   {journey.setup.departureTime ? `${journey.setup.departureTime} · ` : ""}
                   {journey.setup.profile === "worker" ? "Outdoor worker" : "Heat-vulnerable person"}
+                  {` · ${planningPaceLabel(journey.setup)}`}
                   {journey.setup.avoidSteps ? " · avoid known steps" : ""}
                 </small>
               </div>

@@ -144,6 +144,29 @@ test("an open route with no meaningful improvement gets neutral advice", () => {
   assert.equal(advice.currentOption?.directSunSecondsPerJourney, 600);
 });
 
+test("departure advice uses the selected pace for travel and exposure timing", () => {
+  const departure = new Date("2026-06-21T11:00:00.000Z");
+  const advice = buildDepartureAdvice({
+    routes: [walkingRoute()],
+    grid: makeGrid(),
+    departure,
+    profile: "vulnerable",
+    journeyCount: 1,
+    repeatEveryMinutes: 60,
+    walkingPace: "slow",
+    windowMinutes: 0,
+  });
+
+  assert.equal(advice.currentOption?.walkingSecondsPerJourney, 900);
+  assert.equal(advice.currentOption?.directSunSecondsPerJourney, 900);
+  assert.equal(advice.currentOption?.score.walkingPace, "slow");
+  assert.equal(advice.currentOption?.score.journeys[0].departureEpochMs, departure.getTime());
+  assert.equal(
+    advice.currentOption?.score.journeys[0].arrivalEpochMs,
+    departure.getTime() + 900_000,
+  );
+});
+
 test("advice is withheld outside daylight and when model coverage is too low", () => {
   const atNight = buildDepartureAdvice({
     routes: [walkingRoute()],

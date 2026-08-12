@@ -84,6 +84,31 @@ test("morning and evening shadows fall west and east respectively", () => {
   assert.equal(alphaAt(evening, centre - 1, centre), 0);
 });
 
+test("overlapping casts are the exact union of their individual masks", () => {
+  const firstGrid = makeGrid(61, 61, 5);
+  const secondGrid = makeGrid(61, 61, 5);
+  const combinedGrid = makeGrid(61, 61, 5);
+  setHeight(firstGrid, 30, 30, 80);
+  setHeight(secondGrid, 30, 33, 80);
+  setHeight(combinedGrid, 30, 30, 80);
+  setHeight(combinedGrid, 30, 33, 80);
+
+  const first = renderGroundShadowFrame(firstGrid, SUMMER_NOON, LONDON);
+  const second = renderGroundShadowFrame(secondGrid, SUMMER_NOON, LONDON);
+  const combined = renderGroundShadowFrame(combinedGrid, SUMMER_NOON, LONDON);
+  let unionCellCount = 0;
+
+  for (let index = 3; index < combined.pixels.length; index += 4) {
+    const expectedAlpha = Math.max(first.pixels[index], second.pixels[index]);
+    assert.equal(combined.pixels[index], expectedAlpha);
+    if (expectedAlpha > 0) unionCellCount += 1;
+  }
+  assert.equal(
+    combined.shadowPercent,
+    (unionCellCount / combinedGrid.heights.length) * 100,
+  );
+});
+
 test("night returns a subtle, uniform full-area tint", () => {
   const frame = renderGroundShadowFrame(
     makeGrid(7),
@@ -125,6 +150,31 @@ test("very low sun never casts farther than 250 metres", () => {
   }
   assert.ok(furthestDistance > 225, `expected a long low-sun cast, received ${furthestDistance}m`);
   assert.ok(furthestDistance <= 250, `cast exceeded 250m: ${furthestDistance}m`);
+});
+
+test("an elevated obstacle can cast onto lower ground beyond its local-height bound", () => {
+  const resolutionMetres = 2;
+  const grid = makeGrid(41, 41, resolutionMetres);
+  const cellCount = grid.heights.length;
+  grid.validity = new Uint8Array(cellCount).fill(255);
+  grid.terrainElevations = new Float32Array(cellCount);
+  grid.minimumSurfaceElevations = new Float32Array(cellCount);
+  grid.maximumSurfaceElevations = new Float32Array(cellCount);
+
+  const centre = 20;
+  const sourceIndex = centre * grid.metadata.width + centre;
+  grid.heights[sourceIndex] = 10;
+  grid.terrainElevations[sourceIndex] = 90;
+  grid.minimumSurfaceElevations[sourceIndex] = 100;
+  grid.maximumSurfaceElevations[sourceIndex] = 100;
+
+  const frame = renderGroundShadowFrame(grid, SUMMER_NOON, LONDON);
+  const targetY = centre - 10;
+
+  assert.ok(
+    alphaAt(frame, centre, targetY) > 0,
+    "absolute surface elevation should cast twenty metres onto lower ground",
+  );
 });
 
 test("invalid height cells are not painted as certain building or ground shadow", () => {

@@ -6,8 +6,10 @@ import {
   aggregateScheduleScores,
   assessPointExposure,
   labelRouteScores,
+  loadHeightGrid,
   longitudeLatitudeToBng,
   scoreRouteAgainstGrid,
+  scoreRouteSchedule,
 } from "../lib/raster-shade.ts";
 import {
   formatLondonDateTime,
@@ -200,6 +202,15 @@ function rasterScore(overrides) {
   };
 }
 
+function scheduleJourney(score, index = 0, departureEpochMs = SUMMER_NOON.getTime()) {
+  return {
+    index,
+    departureEpochMs,
+    arrivalEpochMs: departureEpochMs + score.durationSeconds * 1000,
+    score,
+  };
+}
+
 test("repeated journeys weight shade by daylight duration", () => {
   const partlyDaylight = rasterScore({
     estimatedDirectSunSeconds: 60,
@@ -210,13 +221,81 @@ test("repeated journeys weight shade by daylight duration", () => {
   });
   const fullyShaded = rasterScore({ estimatedShadePercent: 100 });
   const aggregate = aggregateScheduleScores(route({ distanceMetres: 100 }), [
-    partlyDaylight,
-    fullyShaded,
+    scheduleJourney(partlyDaylight),
+    scheduleJourney(fullyShaded, 1, SUMMER_NOON.getTime() + 3_600_000),
   ]);
   closeTo(aggregate.estimatedShadePercent, (600 / 660) * 100, 1e-9);
   assert.equal(aggregate.daylightSeconds, 660);
   assert.equal(aggregate.estimatedDirectSunSeconds, 60);
   assert.equal(aggregate.journeyCount, 2);
+  assert.equal(aggregate.walkingPace, "standard");
+  assert.equal(aggregate.journeys.length, 2);
+});
+
+test("walking pace consistently changes journey timing, exposure duration and shift instances", () => {
+  const testRoute = route({ durationSeconds: 600 });
+  const grid = makeGrid();
+  const slow = scoreRouteSchedule(testRoute, grid, SUMMER_NOON, 2, 60, "slow");
+  const standard = scoreRouteSchedule(testRoute, grid, SUMMER_NOON, 1, 60);
+  const brisk = scoreRouteSchedule(testRoute, grid, SUMMER_NOON, 1, 60, "brisk");
+
+  assert.equal(standard.durationSeconds, 600, "standard preserves provider duration");
+  assert.equal(standard.estimatedDirectSunSeconds, 600);
+  assert.equal(slow.durationSeconds, 1_800);
+  assert.equal(slow.estimatedDirectSunSeconds, 1_800);
+  assert.equal(brisk.durationSeconds, 480);
+  assert.equal(brisk.estimatedDirectSunSeconds, 480);
+  assert.equal(slow.walkingPace, "slow");
+  assert.equal(slow.journeys[0].departureEpochMs, SUMMER_NOON.getTime());
+  assert.equal(slow.journeys[0].arrivalEpochMs, SUMMER_NOON.getTime() + 900_000);
+  assert.equal(slow.journeys[1].departureEpochMs, SUMMER_NOON.getTime() + 3_600_000);
+  assert.equal(slow.journeys[1].arrivalEpochMs, SUMMER_NOON.getTime() + 4_500_000);
+  assert.equal(slow.sections, slow.journeys[0].score.sections);
+  assert.doesNotThrow(() => structuredClone(slow));
+});
+
+test("a failed height-grid request is evicted so the same pilot can be retried", async () => {
+  const originalFetch = globalThis.fetch;
+  const areaId = `retry-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  let metadataAttempts = 0;
+  const metadata = {
+    id: areaId,
+    width: 1,
+    height: 1,
+    bboxBng: [0, 0, 1, 1],
+    resolutionMetres: 1,
+    heightStepMetres: 1,
+    coveragePercent: 100,
+    source: "synthetic",
+    sourceDate: "test",
+    processed: "test",
+  };
+
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("-heights.json")) {
+      metadataAttempts += 1;
+      if (metadataAttempts === 1) return new Response("temporary failure", { status: 503 });
+      return new Response(JSON.stringify(metadata), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (url.endsWith("-heights.bin")) {
+      return new Response(Uint8Array.of(0), { status: 200 });
+    }
+    throw new Error(`Unexpected test URL: ${url}`);
+  };
+
+  try {
+    await assert.rejects(loadHeightGrid(areaId), /metadata is unavailable/i);
+    await Promise.resolve();
+    const grid = await loadHeightGrid(areaId);
+    assert.equal(metadataAttempts, 2);
+    assert.deepEqual([...grid.heights], [0]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 function scheduleScore(id, durationSeconds, estimatedDirectSunSeconds, range = [0, estimatedDirectSunSeconds]) {

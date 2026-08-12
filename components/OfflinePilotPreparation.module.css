@@ -1,0 +1,136 @@
+.panel {
+  border: 1px solid color-mix(in srgb, #075f56 25%, #d8d4ca);
+  border-radius: 14px;
+  background: #f8f7f2;
+  padding: 16px;
+  color: #172723;
+}
+
+.heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.heading span {
+  display: block;
+  color: #52635f;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.heading h3 {
+  margin: 3px 0 0;
+  font-size: 1rem;
+  line-height: 1.25;
+}
+
+.heading > strong {
+  border-radius: 999px;
+  padding: 5px 9px;
+  font-size: 0.72rem;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.ready {
+  background: #dceee8;
+  color: #075f56;
+}
+
+.notReady {
+  background: #ece9df;
+  color: #5b625e;
+}
+
+.explanation,
+.onlineNote,
+.onlineWarning,
+.verifiedDetail,
+.status {
+  margin: 10px 0 0;
+  font-size: 0.82rem;
+  line-height: 1.48;
+}
+
+.onlineNote {
+  color: #52635f;
+}
+
+.onlineWarning {
+  border-left: 3px solid #ad572b;
+  padding-left: 9px;
+  color: #74391e;
+  font-weight: 650;
+}
+
+.verifiedDetail {
+  color: #075f56;
+  font-weight: 650;
+}
+
+.status {
+  color: #74391e;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.actions button {
+  min-height: 44px;
+  border-radius: 9px;
+  padding: 9px 13px;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.actions button:focus-visible {
+  outline: 3px solid color-mix(in srgb, #075f56 35%, transparent);
+  outline-offset: 2px;
+}
+
+.actions button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.primaryAction {
+  border: 1px solid #075f56;
+  background: #075f56;
+  color: #fff;
+}
+
+.secondaryAction {
+  border: 1px solid #7c8884;
+  background: transparent;
+  color: #243b35;
+}
+
+.removeAction {
+  border: 1px solid #9b452b;
+  background: transparent;
+  color: #74321f;
+}
+
+@media (max-width: 560px) {
+  .heading {
+    display: grid;
+  }
+
+  .heading > strong {
+    justify-self: start;
+  }
+
+  .actions button {
+    width: 100%;
+  }
+}

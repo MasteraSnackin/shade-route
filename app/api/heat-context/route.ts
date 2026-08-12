@@ -5,8 +5,10 @@ import {
   unavailableHeatContext,
   type HeatContextAvailable,
 } from "../../../lib/heat-context";
+import { readBoundedJson } from "../../../lib/bounded-json.ts";
 
 const UPSTREAM_TIMEOUT_MS = 4_000;
+const MAX_UPSTREAM_RESPONSE_BYTES = 256_000;
 const SERVER_CACHE_TTL_MS = 10 * 60 * 1_000;
 const SERVER_STALE_TTL_MS = 60 * 60 * 1_000;
 
@@ -41,7 +43,9 @@ async function fetchHeatContext() {
 
     if (!response.ok) throw new Error("UKHSA heat-health request failed");
 
-    const parsed = parseUkhsaHeatContext(await response.json());
+    const parsed = parseUkhsaHeatContext(
+      await readBoundedJson(response, MAX_UPSTREAM_RESPONSE_BYTES),
+    );
     if (!parsed) throw new Error("UKHSA heat-health response was invalid");
     return parsed;
   } finally {

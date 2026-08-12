@@ -30,5 +30,15 @@ Record the task they attempted, any unsafe or confusing interpretation, which
 trade-off they selected and one change made because of the session. Do not
 collect medical details or publish identifying material.
 
-Use `observations.csv` for field observations. Empty cells mean “not yet
-measured”, not a positive result.
+The in-app “Operational field feedback” form is deliberately separate from
+this calibration protocol. It records the time the report was saved and may,
+with explicit consent, include the model section's start coordinate. It does
+not capture a device GPS observation point or an explicitly entered
+observation time. Its exports can inform operational and usability work, but
+must not be counted as fixed-point calibration observations.
+
+Use `observations.csv` only for observations made under the minimum pilot check
+above. Record the actual device GPS position and actual observation time at the
+point of observation. Do not substitute the in-app report's model-section point
+or save time. Empty cells mean “not yet measured”, not a positive result. No
+physical observations have been added to the repository yet.

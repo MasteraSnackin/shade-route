@@ -694,7 +694,9 @@ export function RouteMap({
       if (pauseTimer) window.clearTimeout(pauseTimer);
       map.off("load", updateShadows);
     };
-  }, [area, departureDate]);
+  // A fresh route set is also the explicit retry signal after a transient
+  // height-pack failure, so both scoring and the 3D shadow layer recover.
+  }, [area, departureDate, routes]);
 
   useEffect(() => {
     const map = mapRef.current;

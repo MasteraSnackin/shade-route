@@ -1,78 +1,296 @@
 # ShadeRoute
 
-ShadeRoute is a mobile-first London prototype that compares real walking-route
-alternatives by journey time and potential direct sunlight under clear skies.
-It was built for Frontline London with two hospital pilot corridors:
+> Mobile-first walking-route comparison using time-dependent clear-sky shade estimates.
 
-- London Waterloo Station to St Thomas’ Hospital
-- King’s Cross Station to University College Hospital
+![Status: working prototype](https://img.shields.io/badge/status-working_prototype-1f6655)
+![Node.js: 22.13 or newer](https://img.shields.io/badge/node-%3E%3D22.13.0-366a54)
+![Licence: not declared](https://img.shields.io/badge/licence-not_declared-777777)
 
-The product supports cached pilot journeys, live custom routing inside either
-pilot area, repeated occupational journeys, access warnings and explicit
-sun/shade/uncertain/unknown route sections. Its 3D map animates estimated
-building and vegetation shadows through the day, while a guarded two-hour scan
-can suggest a lower-exposure route and departure time when the model evidence
-is strong enough. The selected route can also be inspected step by step, used
-in a reference-only walking mode, saved as an on-device shortcut and paired
-with on-device field observations for later export.
+## Description
 
-## Run locally
+ShadeRoute compares real walking alternatives by journey time and potential
+direct-sun exposure. It is designed for heat-vulnerable people and their carers,
+frontline staff and outdoor workers who repeat exposed journeys. The current
+Frontline London prototype covers two hospital corridors:
 
-Requires Node.js `>=22.13.0`.
+- London Waterloo Station to St Thomas’ Hospital.
+- King’s Cross Station to University College Hospital.
+
+The application uses Environment Agency elevation data, a time-aware geometric
+shade model and open walking routes to explain trade-offs rather than issue a
+safety score. Missing model coverage is shown and conservatively counted as
+potential direct sun. Physical field calibration is still pending.
+
+## Table of contents
+
+- [Features](#features)
+- [Technology stack](#technology-stack)
+- [Architecture overview](#architecture-overview)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Configuration](#configuration)
+- [Screenshots and demo](#screenshots-and-demo)
+- [API reference](#api-reference)
+- [Tests](#tests)
+- [Data and responsible use](#data-and-responsible-use)
+- [Roadmap](#roadmap)
+- [Contributing](#contributing)
+- [Licence](#licence)
+- [Contact and support](#contact-and-support)
+
+## Features
+
+- Two bundled London hospital pilot corridors.
+- One to three real route alternatives with time and potential direct-sun comparison.
+- Arbitrary start and destination points inside each supported pilot area.
+- Local landmark and partial amenity search without a commercial geocoder.
+- 3D MapLibre map with buildings and animated, time-dependent ground shadows.
+- Selected-route sections marked as sun, shade, uncertain, unknown or night.
+- Slow, standard and brisk planning presets without claiming measured walking speed.
+- Repeated occupational journeys and a per-trip exposure timeline.
+- Guarded departure advice that is withheld when evidence is weak or access rules conflict.
+- Access, surface, crossing, data-age and coverage warnings.
+- Device-local saved journeys and operational section feedback.
+- Explicit, verified and removable offline packs for bundled pilot journeys.
+- Strict local JSON decision-evidence export with exact coordinates and geometry excluded.
+- Regional UKHSA heat-health context shown separately from route scoring.
+- Latest-request cancellation so stale routing or calculations cannot replace current results.
+
+## Technology stack
+
+| Layer | Technology |
+| --- | --- |
+| Application | React 19, TypeScript, Next.js App Router APIs, Vinext |
+| Hosting runtime | Cloudflare-compatible Worker and static assets |
+| Map | MapLibre GL JS |
+| Solar position | SunCalc 2 |
+| Routing | Valhalla pedestrian routing through a guarded server proxy |
+| Model data | Environment Agency LiDAR DSM and DTM, OpenStreetMap, GLA Cool Space Data |
+| Background work | Browser Web Workers with deterministic synchronous fallbacks |
+| Device storage | LocalStorage and CacheStorage; no application server database |
+| Tests | Node test runner, ESLint and TypeScript |
+
+## Architecture overview
+
+```mermaid
+flowchart LR
+  User[Walker, carer or worker] --> Client[ShadeRoute web client]
+  Client --> Map[MapLibre 3D map]
+  Client --> Workers[Scoring and shadow Web Workers]
+  Client --> Storage[(Device-local storage)]
+  Client --> RouteAPI[/Route API/]
+  Client --> HeatAPI[/Heat-context API/]
+  Client --> Packs[Bundled pilot packs]
+  RouteAPI --> Valhalla[Valhalla routing]
+  HeatAPI --> UKHSA[UKHSA data API]
+  Packs --> OpenData[EA, OSM and GLA data]
+```
+
+Most data and calculation work stays in the browser. The server exposes only
+bounded proxies for live walking alternatives and regional heat context, while
+personal shortcuts, feedback and offline data remain on the device. See
+[ARCHITECTURE.md](ARCHITECTURE.md) for component responsibilities, invariants,
+data flow and deployment details.
+
+## Installation
+
+### Requirements
+
+- Node.js 22.13.0 or newer.
+- npm, using the checked-in lockfile.
+- A modern browser with WebGL for the full 3D map; the route comparison remains
+  the primary decision surface.
+
+### Set up from a clean checkout
 
 ```bash
-npm install
+git clone <ADD_REPOSITORY_URL>
+cd shade-route
+npm ci
+```
+
+No API key is required for the bundled pilots. The default live-routing endpoint
+is a public fair-use service and has no service-level guarantee.
+
+## Usage
+
+Start the local application:
+
+```bash
 npm run dev
 ```
 
-Open `http://localhost:3000/`.
+Open <http://localhost:3000/> and:
 
-## Verify
+1. Choose one of the two pilot corridors.
+2. Set the departure time, audience, pace and access preference.
+3. Compare the route cards before using the 3D map explanation.
+4. Move the time control to see the ground-shadow pattern change.
+5. Optionally prepare the selected bundled pilot for offline use.
+
+Create a production build:
+
+```bash
+npm run build
+```
+
+Rebuild pilot artefacts after deliberately updating source data under `data/`:
+
+```bash
+node scripts/prepare-data.mjs
+```
+
+Generated data must be reviewed, tested and attributed before it is committed.
+
+## Configuration
+
+All configuration is optional for the bundled pilots.
+
+| Variable or file | Purpose | Default |
+| --- | --- | --- |
+| `VALHALLA_URL` | Server-only primary route endpoint | FOSSGIS public Valhalla route endpoint |
+| `VALHALLA_FALLBACK_URL` | Server-only independent fallback route endpoint | Unset |
+| `.openai/hosting.json` | Logical Sites persistence bindings | D1 and R2 disabled |
+| `public/data/` | Versioned pilot maps, routes, grids and context | Checked-in pilot artefacts |
+
+Routing endpoints must use HTTPS. Loopback HTTP is accepted only for local
+development and tests. Do not expose private provider keys to browser code.
+
+## Screenshots and demo
+
+### Desktop
+
+![ShadeRoute desktop audit](docs/audit/after-desktop.png)
+
+### Mobile
+
+![ShadeRoute mobile audit](docs/audit/after-mobile-390.png)
+
+A public live URL has not been established because Sites is not enabled for the
+current workspace. Run the project locally using the instructions above; do not
+interpret a missing deployment URL as evidence that the application has been
+field-validated.
+
+## API reference
+
+### `POST /api/route`
+
+Returns up to three validated walking alternatives when both points are inside
+the same supported pilot area.
+
+```bash
+curl -X POST http://localhost:3000/api/route \
+  -H 'content-type: application/json' \
+  --data '{
+    "origin": {"lat": 51.5033, "lon": -0.1132},
+    "destination": {"lat": 51.4983, "lon": -0.1187}
+  }'
+```
+
+Success:
+
+```json
+{
+  "areaId": "waterloo",
+  "routes": [
+    {
+      "id": "live-1",
+      "distanceMetres": 1234,
+      "durationSeconds": 901,
+      "geometry": [[-0.1132, 51.5033], [-0.1187, 51.4983]],
+      "directions": []
+    }
+  ]
+}
+```
+
+The real geometry contains more coordinates and may return fewer than three
+alternatives. Invalid inputs return `400`; temporary upstream failure returns
+`503`. Every response is private and non-cacheable.
+
+### `GET /api/heat-context`
+
+Returns narrowly parsed London UKHSA context. It can return a time-limited stale
+record when the provider is unavailable, or a neutral `503` unavailable record.
+This endpoint never changes route ranking.
+
+There is no public CLI.
+
+## Tests
+
+Run the production build and all deterministic tests:
 
 ```bash
 npm test
-npm run lint
 ```
 
-`npm test` builds the production Worker and runs the route, production raster,
-London-time, product-claim and deterministic geometry suites.
+Run static checks separately:
 
-## Data and services
+```bash
+npm run lint
+npx tsc --noEmit
+```
 
-- Local basemap and walking-route data: OpenStreetMap contributors, ODbL.
-- Nearby drinking-water, toilet, bench and individual-tree records: a dated,
-  partial OpenStreetMap snapshot; absence is never presented as evidence that
-  an amenity is unavailable.
-- Official cooling-space context: Greater London Authority Cool Space Data
-  2025 under the London Datastore terms. These are dated register entries, not
-  live availability. The GLA does not warrant their quality or accuracy and
-  does not endorse ShadeRoute.
-- Height grids: Environment Agency LiDAR Composite 1 m DSM minus DTM, OGL v3.
-- Solar position: SunCalc v2.
-- Regional context: the official UKHSA London heat-health alert metric through
-  a cached, fail-neutral `/api/heat-context` proxy. It is displayed separately
-  and never changes the route score.
-- Live custom walking routes: the public FOSSGIS Valhalla service through the
-  server-side `/api/route` proxy. Responses are private and are not cached.
+The test suite covers route and API validation, timeout/fallback behaviour,
+worker protocols, absolute-terrain shade geometry, London civil time, repeated
+journeys, decision evidence, offline-pack atomicity, accessibility surface
+requirements and responsible product claims.
 
-The two pilot basemaps, conservative validity masks, height grids and showcase routes are bundled under
-`public/data/`. `scripts/prepare-data.mjs` rebuilds those packs from the source
-material under `data/`. OSM building multipolygons, inner holes and explicit
-height evidence are retained. Ground-shadow rasterisation runs in a browser
-worker, with a deterministic synchronous fallback when workers are unavailable.
+Automated tests do not substitute for physical shade observations, real-device
+offline checks, assistive-technology testing or user research.
 
-## Responsible-use boundary
+## Data and responsible use
+
+- **Routes and map:** OpenStreetMap contributors, ODbL.
+- **Elevation:** Environment Agency LiDAR Composite DSM and DTM, Open Government
+  Licence v3. Surveys in the composite may date from 2000–2022.
+- **Cool spaces:** Greater London Authority Cool Space Data 2025 under London
+  Datastore terms; listing and opening are not live.
+- **Solar geometry:** SunCalc 2.
+- **Heat context:** official UKHSA London metric, displayed separately.
 
 ShadeRoute is an uncalibrated clear-sky geometric model. It does not measure
-temperature, thermal comfort or heat-illness risk, and it does not certify
-routes as step-free. Unknown model sections are conservatively counted as
-potential direct sun so missing data cannot make a route rank better.
+temperature, radiant heat, thermal comfort or heat-illness risk. It does not
+certify routes as step-free, open or safe. Temporary works, foliage, clouds,
+indoor sections, pavement position and current street conditions can differ.
 
-Automatic departure advice is withheld when daylight coverage is below 90%,
-at low sun angles, when sensitivity ranges overlap, when a material improvement
-is absent, or when every eligible route contains a known stair or escalator
-instruction. The displayed sensitivity range is not a statistical confidence
-interval.
+The field form stores operational feedback about a modelled section; it is not
+physical calibration evidence. The fixed-point protocol and empty observation
+template are in [`validation/`](validation/README.md).
 
-The field-validation protocol and empty observation template are in
-`validation/`. Do not replace those unknowns with invented evidence.
+## Roadmap
+
+- Complete and publish field calibration across both corridors and varied sun angles.
+- Add per-cell survey epoch and change detection to the model confidence surface.
+- Prove offline reload and update behaviour on representative mobile devices.
+- Add privacy-bounded operational monitoring and a controlled routing deployment.
+- Validate horizon-angle acceleration before adopting it for wider-area packs.
+- Expand geography only through tiled, provenance-aware model packs.
+
+See [RESEARCHER.md](RESEARCHER.md) for the evidence-ranked technical roadmap.
+
+## Contributing
+
+1. Open an issue describing the user need, affected pilot and safety implications.
+2. Keep changes small and avoid weakening model, privacy or access disclosures.
+3. Add deterministic tests for new parsing, geometry, error or state behaviour.
+4. Run the build, test, lint and TypeScript checks.
+5. Submit a pull request that states data provenance, known limitations and any
+   manual evidence collected.
+
+Never add invented field observations or label an unverified route as safe,
+step-free or medically protective.
+
+## Licence
+
+No project-wide software licence has been declared. Do not assume permission to
+reuse or redistribute the source until the maintainer adds a `LICENSE` file.
+The open-data licences and attribution obligations listed above are separate
+from the software copyright.
+
+## Contact and support
+
+No maintainer name, email address, repository URL or public support channel was
+provided. Until those are supplied, use the issue tracker associated with the
+repository containing this source. For an immediate medical or public-safety
+emergency, use the appropriate emergency service rather than ShadeRoute.

@@ -121,6 +121,19 @@ export function renderGroundShadowFrame(
   if (grid.validity && grid.validity.length !== cellCount) {
     throw new Error("Height validity coverage is incomplete.");
   }
+  const usesAbsoluteElevations = Boolean(
+    grid.terrainElevations &&
+    grid.minimumSurfaceElevations &&
+    grid.maximumSurfaceElevations,
+  );
+  if (
+    usesAbsoluteElevations &&
+    (grid.terrainElevations!.length !== cellCount ||
+      grid.minimumSurfaceElevations!.length !== cellCount ||
+      grid.maximumSurfaceElevations!.length !== cellCount)
+  ) {
+    throw new Error("Absolute elevation coverage is incomplete.");
+  }
 
   const position = SunCalc.getPosition(date, centre[1], centre[0]);
   const azimuthDeg = position.azimuth;
@@ -142,8 +155,9 @@ export function renderGroundShadowFrame(
   }
 
   const mask = new Uint8Array(cellCount);
-  const observerHeightSteps = OBSERVER_HEIGHT_METRES / heightStepMetres;
   let maximumHeightSteps = 0;
+  let maximumAbsoluteSurface = Number.NEGATIVE_INFINITY;
+  let minimumAbsoluteTerrain = Number.POSITIVE_INFINITY;
   let shadowCellCount = 0;
 
   // Elevated cells themselves are not exposed ground, and including their
@@ -151,7 +165,20 @@ export function renderGroundShadowFrame(
   for (let index = 0; index < cellCount; index += 1) {
     if (grid.validity && grid.validity[index] !== 255) continue;
     const heightSteps = grid.heights[index];
-    if (heightSteps <= observerHeightSteps) continue;
+    const terrain = grid.terrainElevations?.[index];
+    const maximumSurface = grid.maximumSurfaceElevations?.[index];
+    if (
+      usesAbsoluteElevations &&
+      Number.isFinite(terrain) &&
+      Number.isFinite(maximumSurface)
+    ) {
+      minimumAbsoluteTerrain = Math.min(minimumAbsoluteTerrain, terrain!);
+      maximumAbsoluteSurface = Math.max(maximumAbsoluteSurface, maximumSurface!);
+    }
+    const aboveTerrain = usesAbsoluteElevations && Number.isFinite(terrain) && Number.isFinite(maximumSurface)
+      ? maximumSurface! - terrain!
+      : heightSteps * heightStepMetres;
+    if (aboveTerrain <= OBSERVER_HEIGHT_METRES) continue;
     mask[index] = 1;
     shadowCellCount += 1;
     if (heightSteps > maximumHeightSteps) maximumHeightSteps = heightSteps;
@@ -159,7 +186,9 @@ export function renderGroundShadowFrame(
 
   const altitudeRadians = (altitudeDeg * Math.PI) / 180;
   const tangent = Math.tan(altitudeRadians);
-  const maximumHeightMetres = maximumHeightSteps * heightStepMetres;
+  const maximumHeightMetres = usesAbsoluteElevations
+    ? maximumAbsoluteSurface - minimumAbsoluteTerrain
+    : maximumHeightSteps * heightStepMetres;
   const naturalMaximumDistance =
     maximumHeightMetres > OBSERVER_HEIGHT_METRES
       ? (maximumHeightMetres - OBSERVER_HEIGHT_METRES) / tangent
@@ -175,8 +204,8 @@ export function renderGroundShadowFrame(
   );
 
   for (const offset of offsets) {
-    const requiredHeightSteps =
-      (OBSERVER_HEIGHT_METRES + offset.distanceMetres * tangent) / heightStepMetres;
+    const requiredRelativeHeight = OBSERVER_HEIGHT_METRES + offset.distanceMetres * tangent;
+    const requiredHeightSteps = requiredRelativeHeight / heightStepMetres;
     const sourceXStart = Math.max(0, -offset.x);
     const sourceXEnd = Math.min(width, width - offset.x);
     const sourceYStart = Math.max(0, -offset.y);
@@ -186,16 +215,24 @@ export function renderGroundShadowFrame(
       let sourceIndex = sourceY * width + sourceXStart;
       let targetIndex = (sourceY + offset.y) * width + sourceXStart + offset.x;
       for (let sourceX = sourceXStart; sourceX < sourceXEnd; sourceX += 1) {
-        const sourceIsValid = !grid.validity || grid.validity[sourceIndex] === 255;
-        const targetIsValid = !grid.validity || grid.validity[targetIndex] === 255;
-        if (
-          sourceIsValid &&
-          targetIsValid &&
-          grid.heights[sourceIndex] > requiredHeightSteps &&
-          mask[targetIndex] === 0
-        ) {
-          mask[targetIndex] = 1;
-          shadowCellCount += 1;
+        // A cell already painted by a footprint or a shorter cast cannot
+        // change again. Check it before reading and validating the elevation
+        // planes; later offsets commonly overlap most of the existing mask.
+        if (mask[targetIndex] === 0) {
+          const sourceIsValid = !grid.validity || grid.validity[sourceIndex] === 255;
+          const targetIsValid = !grid.validity || grid.validity[targetIndex] === 255;
+          const sourceSurface = grid.maximumSurfaceElevations?.[sourceIndex];
+          const targetTerrain = grid.terrainElevations?.[targetIndex];
+          const absoluteRayCleared =
+            usesAbsoluteElevations &&
+            Number.isFinite(sourceSurface) &&
+            Number.isFinite(targetTerrain)
+              ? sourceSurface! > targetTerrain! + requiredRelativeHeight
+              : grid.heights[sourceIndex] > requiredHeightSteps;
+          if (sourceIsValid && targetIsValid && absoluteRayCleared) {
+            mask[targetIndex] = 1;
+            shadowCellCount += 1;
+          }
         }
         sourceIndex += 1;
         targetIndex += 1;

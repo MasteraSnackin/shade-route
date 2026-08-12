@@ -75,7 +75,7 @@ export function HeatContext() {
 
   return (
     <section className="heat-context" aria-labelledby="heat-context-title" aria-live="polite">
-      <h3 id="heat-context-title">London heat-health context</h3>
+      <h2 id="heat-context-title">London heat-health context</h2>
 
       {state.kind === "loading" ? (
         <p>Loading regional UKHSA context…</p>

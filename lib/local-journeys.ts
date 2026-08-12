@@ -1,3 +1,6 @@
+import { londonDateTimeValue } from "./london-time.ts";
+import { isWalkingPace, type WalkingPace } from "./walking-pace.ts";
+
 export const SAVED_JOURNEYS_STORAGE_KEY = "shaderoute.saved-journeys.v1";
 export const FIELD_FEEDBACK_STORAGE_KEY = "shaderoute.field-feedback.v1";
 
@@ -24,6 +27,8 @@ export interface SavedJourneySetup {
   /** Local London wall-clock time, stored without a journey date. */
   departureTime?: string;
   profile: "vulnerable" | "worker";
+  /** Omitted by legacy v1 records; readers normalise it to standard. */
+  walkingPace?: WalkingPace;
   journeyCount: number;
   repeatEveryMinutes: number;
   avoidSteps: boolean;
@@ -58,17 +63,24 @@ export interface FeedbackLocation {
 
 export interface FieldFeedbackContext {
   routeId: string;
+  pilotArea?: string;
   routeName?: string;
   segmentId?: string;
   segmentLabel?: string;
   predictedState?: PredictedShadeState;
   predictedAt?: string;
-  /** Candidate coordinates. They are discarded unless includeLocation is explicitly true. */
+  /** Model-section reference coordinates. They are not device GPS and are discarded unless explicitly included. */
   location?: FeedbackLocation;
 }
 
 export interface FieldFeedbackSubmission {
   outcome: FieldFeedbackOutcome;
+  /** Records whether the estimate was seen before current conditions were checked. Operational context only. */
+  predictionRecordedFirst?: boolean;
+  pavementSide?: "left" | "right" | "centre" | "not-recorded";
+  weatherVisibility?: "clear-direct-sun" | "intermittent-sun" | "overcast" | "not-recorded";
+  leafState?: "leaf-on" | "partial" | "leaf-off" | "not-applicable" | "not-recorded";
+  temporaryConditions?: string;
   note?: string;
   includeLocation?: boolean;
 }
@@ -77,6 +89,11 @@ export interface FieldFeedbackRecord extends Omit<FieldFeedbackContext, "locatio
   id: string;
   submittedAt: string;
   outcome: FieldFeedbackOutcome;
+  predictionRecordedFirst: boolean;
+  pavementSide: "left" | "right" | "centre" | "not-recorded";
+  weatherVisibility: "clear-direct-sun" | "intermittent-sun" | "overcast" | "not-recorded";
+  leafState: "leaf-on" | "partial" | "leaf-off" | "not-applicable" | "not-recorded";
+  temporaryConditions?: string;
   note?: string;
   includeLocation: boolean;
   location?: FeedbackLocation;
@@ -152,6 +169,7 @@ function cleanSetup(value: unknown): SavedJourneySetup | null {
     destination,
     ...(departureTime ? { departureTime } : {}),
     profile: setup.profile,
+    walkingPace: isWalkingPace(setup.walkingPace) ? setup.walkingPace : "standard",
     journeyCount: setup.journeyCount!,
     repeatEveryMinutes: setup.repeatEveryMinutes!,
     avoidSteps: setup.avoidSteps,
@@ -383,6 +401,7 @@ function cleanFeedbackRecord(value: unknown): FieldFeedbackRecord | null {
     id,
     submittedAt,
     routeId,
+    ...(cleanText(feedback.pilotArea, 80) ? { pilotArea: cleanText(feedback.pilotArea, 80) } : {}),
     ...(cleanText(feedback.routeName, 160) ? { routeName: cleanText(feedback.routeName, 160) } : {}),
     ...(cleanText(feedback.segmentId, 120) ? { segmentId: cleanText(feedback.segmentId, 120) } : {}),
     ...(cleanText(feedback.segmentLabel, 240)
@@ -393,6 +412,19 @@ function cleanFeedbackRecord(value: unknown): FieldFeedbackRecord | null {
       : {}),
     ...(predictedAt ? { predictedAt } : {}),
     outcome: feedback.outcome,
+    predictionRecordedFirst: feedback.predictionRecordedFirst === true,
+    pavementSide: ["left", "right", "centre", "not-recorded"].includes(feedback.pavementSide ?? "")
+      ? feedback.pavementSide as FieldFeedbackRecord["pavementSide"]
+      : "not-recorded",
+    weatherVisibility: ["clear-direct-sun", "intermittent-sun", "overcast", "not-recorded"].includes(feedback.weatherVisibility ?? "")
+      ? feedback.weatherVisibility as FieldFeedbackRecord["weatherVisibility"]
+      : "not-recorded",
+    leafState: ["leaf-on", "partial", "leaf-off", "not-applicable", "not-recorded"].includes(feedback.leafState ?? "")
+      ? feedback.leafState as FieldFeedbackRecord["leafState"]
+      : "not-recorded",
+    ...(cleanText(feedback.temporaryConditions, 500)
+      ? { temporaryConditions: cleanText(feedback.temporaryConditions, 500) }
+      : {}),
     ...(cleanText(feedback.note, 1_000) ? { note: cleanText(feedback.note, 1_000) } : {}),
     includeLocation,
     ...(location ? { location } : {}),
@@ -453,12 +485,18 @@ export function submitFieldFeedback(
     id: makeId("feedback"),
     submittedAt: new Date().toISOString(),
     routeId,
+    pilotArea: context.pilotArea,
     routeName: context.routeName,
     segmentId: context.segmentId,
     segmentLabel: context.segmentLabel,
     predictedState: context.predictedState,
     predictedAt: context.predictedAt,
     outcome: submission.outcome,
+    predictionRecordedFirst: submission.predictionRecordedFirst,
+    pavementSide: submission.pavementSide,
+    weatherVisibility: submission.weatherVisibility,
+    leafState: submission.leafState,
+    temporaryConditions: submission.temporaryConditions,
     note: submission.note,
     includeLocation,
     ...(location ? { location } : {}),
@@ -502,44 +540,74 @@ export function fieldFeedbackToJson(records: FieldFeedbackRecord[]) {
 }
 
 function csvCell(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
   let text = value === undefined || value === null ? "" : String(value);
-  if (/^[=+\-@]/.test(text)) text = `'${text}`;
+  if (typeof value === "string" && /^[=+\-@]/.test(text)) text = `'${text}`;
   return `"${text.replaceAll('"', '""')}"`;
 }
 
 export function fieldFeedbackToCsv(records: FieldFeedbackRecord[]) {
   const headings = [
-    "submittedAt",
-    "routeId",
-    "routeName",
-    "segmentId",
-    "segmentLabel",
-    "predictedState",
-    "predictedAt",
-    "outcome",
-    "note",
-    "includeLocation",
-    "latitude",
-    "longitude",
-    "accuracyMetres",
+    "report_id",
+    "pilot_area",
+    "model_section_latitude",
+    "model_section_longitude",
+    "pavement_side",
+    "report_saved_london_datetime",
+    "weather_visibility",
+    "reported_state",
+    "modelled_state",
+    "estimate_seen_before_report",
+    "temporary_conditions",
+    "leaf_state",
+    "observer_notes",
+    "route_id",
+    "route_name",
+    "segment_id",
+    "segment_label",
+    "modelled_london_datetime",
+    "include_model_section_location",
+    "model_section_accuracy_metres",
   ];
   const rows = records
     .map(cleanFeedbackRecord)
     .filter((record): record is FieldFeedbackRecord => record !== null)
-    .map((record) => [
-      record.submittedAt,
-      record.routeId,
-      record.routeName,
-      record.segmentId,
-      record.segmentLabel,
-      record.predictedState,
-      record.predictedAt,
-      record.outcome,
-      record.note,
-      record.includeLocation,
-      record.location?.latitude,
-      record.location?.longitude,
-      record.location?.accuracyMetres,
-    ]);
+    .map((record) => {
+      const reportedState = record.outcome === "actually-sunny"
+        ? "sun"
+        : record.outcome === "actually-shaded"
+          ? "shade"
+          : record.outcome === "predicted-correct" &&
+              (record.predictedState === "sun" || record.predictedState === "shade")
+            ? record.predictedState
+            : "not-recorded";
+      const outcomeNote = record.outcome === "blocked-or-inaccessible"
+        ? "Route blocked or inaccessible."
+        : record.outcome === "other"
+          ? "Other field outcome."
+          : "";
+      return [
+        record.id,
+        record.pilotArea,
+        record.location?.latitude,
+        record.location?.longitude,
+        record.pavementSide,
+        londonDateTimeValue(new Date(record.submittedAt)),
+        record.weatherVisibility,
+        reportedState,
+        record.predictedState,
+        record.predictionRecordedFirst,
+        record.temporaryConditions,
+        record.leafState,
+        [outcomeNote, record.note].filter(Boolean).join(" "),
+        record.routeId,
+        record.routeName,
+        record.segmentId,
+        record.segmentLabel,
+        record.predictedAt ? londonDateTimeValue(new Date(record.predictedAt)) : undefined,
+        record.includeLocation,
+        record.location?.accuracyMetres,
+      ];
+    });
   return [headings, ...rows].map((row) => row.map(csvCell).join(",")).join("\n");
 }

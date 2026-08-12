@@ -34,6 +34,11 @@ export interface FieldFeedbackProps {
 interface FeedbackDraft {
   contextKey: string;
   outcome: FieldFeedbackOutcome | "";
+  predictionRecordedFirst: boolean;
+  pavementSide: "left" | "right" | "centre" | "not-recorded";
+  weatherVisibility: "clear-direct-sun" | "intermittent-sun" | "overcast" | "not-recorded";
+  leafState: "leaf-on" | "partial" | "leaf-off" | "not-applicable" | "not-recorded";
+  temporaryConditions: string;
   note: string;
   includeLocation: boolean;
 }
@@ -118,12 +123,27 @@ export function FieldFeedback({ context, onSubmitted }: FieldFeedbackProps) {
   const [draftState, setDraftState] = useState<FeedbackDraft>({
     contextKey,
     outcome: "",
+    predictionRecordedFirst: false,
+    pavementSide: "not-recorded",
+    weatherVisibility: "not-recorded",
+    leafState: "not-recorded",
+    temporaryConditions: "",
     note: "",
     includeLocation: false,
   });
   const draft = draftState.contextKey === contextKey
     ? draftState
-    : { contextKey, outcome: "" as const, note: "", includeLocation: false };
+    : {
+        contextKey,
+        outcome: "" as const,
+        predictionRecordedFirst: false,
+        pavementSide: "not-recorded" as const,
+        weatherVisibility: "not-recorded" as const,
+        leafState: "not-recorded" as const,
+        temporaryConditions: "",
+        note: "",
+        includeLocation: false,
+      };
   const [status, setStatus] = useState("");
   const [confirmClear, setConfirmClear] = useState(false);
   const cancelClearRef = useRef<HTMLButtonElement>(null);
@@ -149,12 +169,27 @@ export function FieldFeedback({ context, onSubmitted }: FieldFeedbackProps) {
     try {
       const record = submitFieldFeedback(context, {
         outcome: draft.outcome,
+        predictionRecordedFirst: draft.predictionRecordedFirst,
+        pavementSide: draft.pavementSide,
+        weatherVisibility: draft.weatherVisibility,
+        leafState: draft.leafState,
+        temporaryConditions: draft.temporaryConditions,
         note: draft.note,
         includeLocation: locationAvailable && draft.includeLocation,
       });
       announceFieldFeedbackChange();
-      setDraftState({ contextKey, outcome: "", note: "", includeLocation: false });
-      setStatus("Report saved on this device. Nothing was sent to a server.");
+      setDraftState({
+        contextKey,
+        outcome: "",
+        predictionRecordedFirst: false,
+        pavementSide: "not-recorded",
+        weatherVisibility: "not-recorded",
+        leafState: "not-recorded",
+        temporaryConditions: "",
+        note: "",
+        includeLocation: false,
+      });
+      setStatus("Operational section report saved locally on this device. Nothing was sent to a server.");
       onSubmitted?.(record);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "The report could not be saved.");
@@ -203,13 +238,14 @@ export function FieldFeedback({ context, onSubmitted }: FieldFeedbackProps) {
 
   return (
     <section className="model-status-panel field-feedback" aria-labelledby={headingId}>
-      <span>Field observations</span>
-      <h3 id={headingId}>Report what you observed</h3>
+      <span>Operational field feedback</span>
+      <h3 id={headingId}>Report conditions on this modelled section</h3>
       <p id={privacyId}>
-        This saves the route section, modelled time, answer and optional note in this browser.
-        Section coordinates are excluded unless you explicitly include them. This form does not
-        submit anything to a server; an exported file leaves this browser only if you share it. Up
-        to 500 reports can be kept here.
+        Nothing is saved automatically or sent to a server. Choosing Save writes the route section,
+        modelled time, time saved, pavement side, visible-sun conditions, leaf state, temporary
+        conditions, answer and optional note to this browser&apos;s local storage. The optional point is
+        the model section&apos;s start, not a device GPS observation. An exported file leaves this browser
+        only if you share it. Up to 500 reports can be kept here.
       </p>
 
       {context.predictedState && (
@@ -225,6 +261,21 @@ export function FieldFeedback({ context, onSubmitted }: FieldFeedbackProps) {
       ) : null}
 
       <form onSubmit={handleSubmit} aria-describedby={privacyId}>
+        <div className="access-option">
+          <input
+            id={`${headingId}-prediction-first`}
+            aria-label="Estimate seen before checking current conditions"
+            type="checkbox"
+            checked={draft.predictionRecordedFirst}
+            disabled={storageBlocked || !context.predictedState || !context.predictedAt}
+            onChange={(event) => updateDraft({ predictionRecordedFirst: event.target.checked })}
+          />
+          <label htmlFor={`${headingId}-prediction-first`}>
+            <strong>I saw the displayed estimate before checking current conditions</strong>
+            <small>This records report order only; it does not make this a fixed-point calibration observation.</small>
+          </label>
+        </div>
+
         <fieldset disabled={storageBlocked}>
           <legend>What happened on this section?</legend>
           {OUTCOMES.map((option) => {
@@ -249,6 +300,63 @@ export function FieldFeedback({ context, onSubmitted }: FieldFeedbackProps) {
           })}
         </fieldset>
 
+        <div className="field-feedback-grid">
+          <label>
+            Side of pavement
+            <select
+              value={draft.pavementSide}
+              onChange={(event) => updateDraft({
+                pavementSide: event.target.value as FeedbackDraft["pavementSide"],
+              })}
+            >
+              <option value="not-recorded">Not recorded</option>
+              <option value="left">Left in direction of travel</option>
+              <option value="right">Right in direction of travel</option>
+              <option value="centre">Centre or shared space</option>
+            </select>
+          </label>
+          <label>
+            Sun visibility
+            <select
+              value={draft.weatherVisibility}
+              onChange={(event) => updateDraft({
+                weatherVisibility: event.target.value as FeedbackDraft["weatherVisibility"],
+              })}
+            >
+              <option value="not-recorded">Not recorded</option>
+              <option value="clear-direct-sun">Clear direct sunlight visible</option>
+              <option value="intermittent-sun">Intermittent sunlight</option>
+              <option value="overcast">Overcast; no direct-sun validation</option>
+            </select>
+          </label>
+          <label>
+            Leaf state
+            <select
+              value={draft.leafState}
+              onChange={(event) => updateDraft({
+                leafState: event.target.value as FeedbackDraft["leafState"],
+              })}
+            >
+              <option value="not-recorded">Not recorded</option>
+              <option value="leaf-on">Leaf on</option>
+              <option value="partial">Partial leaf</option>
+              <option value="leaf-off">Leaf off</option>
+              <option value="not-applicable">No relevant vegetation</option>
+            </select>
+          </label>
+        </div>
+
+        <label>
+          Temporary conditions
+          <input
+            type="text"
+            value={draft.temporaryConditions}
+            maxLength={500}
+            onChange={(event) => updateDraft({ temporaryConditions: event.target.value })}
+            placeholder="For example: works hoarding, parked vehicle or temporary canopy"
+          />
+        </label>
+
         <label htmlFor={noteId}>Optional detail</label>
         <textarea
           id={noteId}
@@ -264,17 +372,17 @@ export function FieldFeedback({ context, onSubmitted }: FieldFeedbackProps) {
           <input
             id={locationId}
             type="checkbox"
-            aria-label="Include this section’s coordinates"
+            aria-label="Include the model section reference point"
             checked={locationAvailable && draft.includeLocation}
             disabled={storageBlocked || !locationAvailable}
             onChange={(event) => updateDraft({ includeLocation: event.target.checked })}
           />
           <span>
-            <strong>Include this section’s coordinates</strong>
+            <strong>Include the model section reference point</strong>
             <small>
               {locationAvailable
-                ? "Off by default. This adds coordinates to the on-device report and any export."
-                : "No section coordinates are available, so none will be stored."}
+                ? "Off by default. This is the model section’s start coordinate, not your device position or a measured observation point."
+                : "No model section reference point is available, so no coordinates will be stored."}
             </small>
           </span>
         </label>
@@ -302,7 +410,7 @@ export function FieldFeedback({ context, onSubmitted }: FieldFeedbackProps) {
                   <strong>{outcomeLabel(record.outcome)}</strong>
                   <small>
                     {record.routeName ?? record.routeId}
-                    {record.includeLocation ? " · coordinates included" : " · no coordinates"}
+                    {record.includeLocation ? " · model section point included" : " · no coordinates"}
                   </small>
                 </div>
                 <button
@@ -320,8 +428,9 @@ export function FieldFeedback({ context, onSubmitted }: FieldFeedbackProps) {
       )}
 
       <p id={exportPrivacyId}>
-        Exports contain route details, dates, notes and any coordinates you chose to include. Check
-        the file before sharing it.
+        Exports contain route details, modelled and saved times, notes and any model section point you
+        chose to include. They are operational reports, not the fixed-point calibration dataset. Check the
+        file before sharing it.
       </p>
       <div aria-describedby={exportPrivacyId}>
         <button

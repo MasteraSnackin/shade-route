@@ -49,6 +49,9 @@ test("bundles both pilot corridors and removes the disposable starter", async ()
     await Promise.all([
       access(new URL(`../public/data/${area.id}-heights.bin`, import.meta.url)),
       access(new URL(`../public/data/${area.id}-heights.json`, import.meta.url)),
+      access(new URL(`../public/data/${area.id}-terrain.bin`, import.meta.url)),
+      access(new URL(`../public/data/${area.id}-surface-min.bin`, import.meta.url)),
+      access(new URL(`../public/data/${area.id}-surface-max.bin`, import.meta.url)),
       access(new URL(`../public/data/${area.id}-map.json`, import.meta.url)),
     ]);
   }

@@ -65,10 +65,22 @@ interface ValhallaTrip {
   legs: Array<{ shape: string; maneuvers?: ValhallaManeuver[] }>;
 }
 
+export interface RouteValidationContext {
+  origin: Pick<NamedPoint, "lat" | "lon">;
+  destination: Pick<NamedPoint, "lat" | "lon">;
+  bbox: PilotArea["bbox"];
+  endpointToleranceMetres?: number;
+}
+
 const ROUTE_COMPARISON_SAMPLES = 41;
 const DUPLICATE_MEAN_SEPARATION_METRES = 10;
 const DUPLICATE_P90_SEPARATION_METRES = 20;
 const DUPLICATE_MAX_SEPARATION_METRES = 35;
+const MAX_ROUTE_COORDINATES = 10_000;
+const MAX_ROUTE_DIRECTIONS = 512;
+const MAX_ROUTE_DISTANCE_METRES = 10_000;
+const MAX_ROUTE_DURATION_SECONDS = 4 * 60 * 60;
+const DEFAULT_ENDPOINT_TOLERANCE_METRES = 100;
 
 export function decodePolyline(encoded: string, precision = 6): Coordinate[] {
   const factor = 10 ** precision;
@@ -98,6 +110,9 @@ export function decodePolyline(encoded: string, precision = 6): Coordinate[] {
   };
 
   while (index < encoded.length) {
+    if (coordinates.length >= MAX_ROUTE_COORDINATES) {
+      throw new Error("The routing service returned too many route coordinates.");
+    }
     latitude += decodeValue();
     longitude += decodeValue();
     const coordinate: Coordinate = [longitude / factor, latitude / factor];
@@ -122,16 +137,116 @@ function isValhallaTrip(value: unknown): value is ValhallaTrip {
     trip.summary &&
       typeof trip.summary.length === "number" &&
       Number.isFinite(trip.summary.length) &&
-      trip.summary.length >= 0 &&
+      trip.summary.length > 0 &&
+      Math.round(trip.summary.length * 1000) > 0 &&
+      trip.summary.length * 1000 <= MAX_ROUTE_DISTANCE_METRES &&
       typeof trip.summary.time === "number" &&
       Number.isFinite(trip.summary.time) &&
-      trip.summary.time >= 0 &&
+      trip.summary.time > 0 &&
+      Math.round(trip.summary.time) > 0 &&
+      trip.summary.time <= MAX_ROUTE_DURATION_SECONDS &&
       Array.isArray(trip.legs) &&
-      trip.legs.length > 0,
+      trip.legs.length === 1,
   );
 }
 
-function compactTrip(value: unknown, id: string): WalkingRoute {
+function compactDirections(
+  maneuvers: ValhallaManeuver[] | undefined,
+  coordinateCount: number,
+): RouteDirection[] {
+  if (!maneuvers) return [];
+  if (maneuvers.length > MAX_ROUTE_DIRECTIONS) {
+    throw new Error("The routing service returned too many walking instructions.");
+  }
+  return maneuvers.map((maneuver) => {
+    const beginIndex = maneuver.begin_shape_index;
+    const endIndex = maneuver.end_shape_index;
+    if (
+      !Number.isSafeInteger(beginIndex) ||
+      !Number.isSafeInteger(endIndex) ||
+      beginIndex! < 0 ||
+      endIndex! < beginIndex! ||
+      endIndex! >= coordinateCount ||
+      !Number.isFinite(maneuver.length) ||
+      maneuver.length! < 0 ||
+      !Number.isFinite(maneuver.time) ||
+      maneuver.time! < 0
+    ) {
+      throw new Error("The routing service returned invalid walking instructions.");
+    }
+    const instruction = typeof maneuver.instruction === "string"
+      ? maneuver.instruction.trim()
+      : "";
+    if (instruction.length > 500) {
+      throw new Error("The routing service returned an invalid walking instruction.");
+    }
+    return {
+      instruction: instruction || "Continue",
+      distanceMetres: Math.round(maneuver.length! * 1000),
+      durationSeconds: Math.round(maneuver.time!),
+      beginIndex: beginIndex!,
+      endIndex: endIndex!,
+      maneuverType: Number.isFinite(maneuver.type) ? maneuver.type : undefined,
+      bearingAfter: Number.isFinite(maneuver.bearing_after) ? maneuver.bearing_after : undefined,
+      succinctInstruction: typeof maneuver.verbal_succinct_transition_instruction === "string"
+        ? maneuver.verbal_succinct_transition_instruction.slice(0, 500)
+        : undefined,
+      roughSurfaceFlag: maneuver.rough === true,
+      travelType: typeof maneuver.travel_type === "string"
+        ? maneuver.travel_type.slice(0, 40)
+        : undefined,
+    };
+  });
+}
+
+function routeGeometryDistanceMetres(coordinates: Coordinate[]) {
+  return coordinates.slice(1).reduce(
+    (sum, coordinate, index) => sum + haversineMetres(coordinates[index], coordinate),
+    0,
+  );
+}
+
+function coordinateInsideBbox(coordinate: Coordinate, bbox: PilotArea["bbox"]) {
+  const [west, south, east, north] = bbox;
+  return coordinate[0] >= west &&
+    coordinate[0] <= east &&
+    coordinate[1] >= south &&
+    coordinate[1] <= north;
+}
+
+export function validateWalkingRoute(
+  route: WalkingRoute,
+  context: RouteValidationContext,
+) {
+  if (
+    route.coordinates.length < 2 ||
+    !Number.isFinite(route.distanceMetres) ||
+    route.distanceMetres <= 0 ||
+    !Number.isFinite(route.durationSeconds) ||
+    route.durationSeconds <= 0
+  ) {
+    return false;
+  }
+  const tolerance = context.endpointToleranceMetres ?? DEFAULT_ENDPOINT_TOLERANCE_METRES;
+  if (
+    haversineMetres(route.coordinates[0], [context.origin.lon, context.origin.lat]) > tolerance ||
+    haversineMetres(route.coordinates.at(-1)!, [context.destination.lon, context.destination.lat]) > tolerance
+  ) {
+    return false;
+  }
+  if (!route.coordinates.every((coordinate) => coordinateInsideBbox(coordinate, context.bbox))) {
+    return false;
+  }
+  const geometryDistance = routeGeometryDistanceMetres(route.coordinates);
+  const allowedDifference = Math.max(100, route.distanceMetres * 0.15);
+  return Math.abs(geometryDistance - route.distanceMetres) <= allowedDifference;
+}
+
+function compactTrip(
+  value: unknown,
+  id: string,
+  validationContext?: RouteValidationContext,
+): WalkingRoute {
   if (!isValhallaTrip(value)) {
     throw new Error("The routing service returned an incomplete journey.");
   }
@@ -139,27 +254,20 @@ function compactTrip(value: unknown, id: string): WalkingRoute {
   const leg = trip.legs[0];
   if (!leg?.shape) throw new Error("Routing response did not include a walkable shape.");
   const coordinates = decodePolyline(leg.shape);
-  if (coordinates.length < 2) {
+  if (coordinates.length < 2 || coordinates.length > MAX_ROUTE_COORDINATES) {
     throw new Error("Routing response did not include a walkable shape.");
   }
-  return {
+  const route: WalkingRoute = {
     id,
     coordinates,
     distanceMetres: Math.round(trip.summary.length * 1000),
     durationSeconds: Math.round(trip.summary.time),
-    directions: (leg.maneuvers ?? []).map((maneuver) => ({
-      instruction: maneuver.instruction ?? "Continue",
-      distanceMetres: Math.round((maneuver.length ?? 0) * 1000),
-      durationSeconds: Math.round(maneuver.time ?? 0),
-      beginIndex: maneuver.begin_shape_index ?? 0,
-      endIndex: maneuver.end_shape_index ?? 0,
-      maneuverType: Number.isFinite(maneuver.type) ? maneuver.type : undefined,
-      bearingAfter: Number.isFinite(maneuver.bearing_after) ? maneuver.bearing_after : undefined,
-      succinctInstruction: maneuver.verbal_succinct_transition_instruction,
-      roughSurfaceFlag: maneuver.rough === true,
-      travelType: maneuver.travel_type,
-    })),
+    directions: compactDirections(leg.maneuvers, coordinates.length),
   };
+  if (validationContext && !validateWalkingRoute(route, validationContext)) {
+    throw new Error("The routing service returned a journey outside the modelled pilot area.");
+  }
+  return route;
 }
 
 function sampleRoute(coordinates: Coordinate[], sampleCount = ROUTE_COMPARISON_SAMPLES) {
@@ -259,13 +367,14 @@ export function deduplicateWalkingRoutes(routes: WalkingRoute[], limit = 3) {
 export function compactValhallaResponse(
   response: unknown,
   idPrefix = "custom",
+  validationContext?: RouteValidationContext,
 ): WalkingRoute[] {
   if (!response || typeof response !== "object") {
     throw new Error("The routing service returned no usable journeys.");
   }
   const value = response as { trip?: unknown; alternates?: unknown };
   const alternatives = Array.isArray(value.alternates)
-    ? value.alternates.map((item) =>
+    ? value.alternates.slice(0, 7).map((item) =>
         item && typeof item === "object" ? (item as { trip?: unknown }).trip : undefined,
       )
     : [];
@@ -274,7 +383,7 @@ export function compactValhallaResponse(
 
   for (const candidate of candidates) {
     try {
-      validRoutes.push(compactTrip(candidate, "candidate"));
+      validRoutes.push(compactTrip(candidate, "candidate", validationContext));
     } catch {
       // A malformed alternate should not discard other usable walking routes.
     }
