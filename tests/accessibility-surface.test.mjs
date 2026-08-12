@@ -15,6 +15,34 @@ test("keyboard users can bypass the introduction and focus the journey planner",
   assert.match(source, /aria-pressed=\{route\.id === selectedRouteId\}/);
 });
 
+test("keyboard users can confirm the map centre while choosing a custom point", async () => {
+  const [source, css] = await Promise.all([
+    readFile(new URL("../components/RouteMap.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(source, /const centre = mapRef\.current\?\.getCenter\(\)/);
+  assert.match(source, /pickCallbackRef\.current\(\[centre\.lng, centre\.lat\]\)/);
+  assert.match(source, /Use map centre for \{pickingLabel\}/);
+  assert.match(source, /use its arrow keys[\s\S]*?centre marker/);
+  assert.match(source, /className="map-pick-centre" aria-hidden="true"/);
+  assert.match(css, /\.map-status\.is-picking button\s*\{[\s\S]*?min-height: 44px;/);
+});
+
+test("local place failures retain pilot landmarks and expose a bounded retry", async () => {
+  const source = await readFile(
+    new URL("../components/LocalPlaceSearch.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /const controller = new AbortController\(\)/);
+  assert.match(source, /signal: controller\.signal/);
+  assert.match(source, /controller\.abort\(\)/);
+  assert.match(source, /\.\.\.pilotOptions\(area\),[\s\S]*?\.\.\.currentContextState\.options/);
+  assert.match(source, /Local amenity places could not be loaded\. The two pilot landmarks are still available\./);
+  assert.match(source, /Retry local places/);
+});
+
 test("dense controls retain accessible targets and user display preferences", async () => {
   const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 

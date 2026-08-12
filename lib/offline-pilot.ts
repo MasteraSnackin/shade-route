@@ -1,11 +1,106 @@
 export type OfflinePilotAreaId = "waterloo" | "kings-cross";
 
-export const OFFLINE_PILOT_SCHEMA_VERSION = 1 as const;
-export const OFFLINE_PILOT_PROTOCOL_VERSION = 1 as const;
-export const OFFLINE_PILOT_PACK_VERSION = "pilot-data-2026-08-12-v1";
-export const OFFLINE_PILOT_WORKER_VERSION = "shade-route-offline-2026-08-12-v1";
-export const OFFLINE_PILOT_STORAGE_KEY = "shaderoute.offline-pilots.v1";
+export const OFFLINE_PILOT_SCHEMA_VERSION = 2 as const;
+export const OFFLINE_PILOT_PROTOCOL_VERSION = 2 as const;
+export const OFFLINE_PILOT_PACK_VERSION = "pilot-data-2026-08-12-v2";
+export const OFFLINE_PILOT_WORKER_VERSION = "shade-route-offline-2026-08-12-v2";
+export const OFFLINE_PILOT_STORAGE_KEY = "shaderoute.offline-pilots.v2";
 export const OFFLINE_PILOT_SERVICE_WORKER_URL = "/shade-route-sw.js";
+
+export interface OfflinePilotAssetIntegrity {
+  path: string;
+  byteLength: number;
+  sha256: string;
+}
+
+export interface OfflinePilotIntegrityManifest {
+  areaId: OfflinePilotAreaId;
+  packVersion: typeof OFFLINE_PILOT_PACK_VERSION;
+  manifestId: string;
+  assets: OfflinePilotAssetIntegrity[];
+}
+
+/**
+ * Release-pinned integrity for the public assets that make up the two data packs.
+ * Tests recalculate every value from `public/`, so changing an asset requires an
+ * explicit manifest and pack-version update rather than silently blessing it.
+ */
+export const OFFLINE_PILOT_STATIC_ASSET_INTEGRITY: Readonly<
+  Record<string, Readonly<Omit<OfflinePilotAssetIntegrity, "path">>>
+> = {
+  "/favicon.svg": {
+    byteLength: 712,
+    sha256: "e6d2e59b7b5bbb0342e0fb496dfc262decbfe4426bbb7b047aec8d467d1dc6f7",
+  },
+  "/data/pilot-routes.json": {
+    byteLength: 43_451,
+    sha256: "f7b3342927967ffbb893bf152e59ce5325674e58497bbe8d75b1aed47ed86ce4",
+  },
+  "/data/context-waterloo.json": {
+    byteLength: 8_289,
+    sha256: "f4ee2327486a2404d338d98664ee4090e3e90a23555b9f7a105bba94ac3b50f0",
+  },
+  "/data/waterloo-map.json": {
+    byteLength: 3_346_962,
+    sha256: "2f811587c5948baaab4b362832ee34db98b04801d455a39a45b244f712a02a44",
+  },
+  "/data/waterloo-heights.json": {
+    byteLength: 879,
+    sha256: "72ac57609f2b9313c1d86adfb3f400cbc5f2eb330d08a9a49e778d1215971d96",
+  },
+  "/data/waterloo-heights.bin": {
+    byteLength: 298_390,
+    sha256: "2c0919f5c61feb72022cc8b6b5af3bdbbfe1e33d56cac037a47a6c675a6cd022",
+  },
+  "/data/waterloo-validity.bin": {
+    byteLength: 298_390,
+    sha256: "8b7855a83f296af82233f299571072217f6b19f0322cb314355321a0e9e1ab91",
+  },
+  "/data/waterloo-terrain.bin": {
+    byteLength: 1_193_560,
+    sha256: "f1fa6a4a8ead90fb77d0d9942e98da12696380098e6eaf2a93766f68b22723e3",
+  },
+  "/data/waterloo-surface-min.bin": {
+    byteLength: 1_193_560,
+    sha256: "6d98e673213eb012a45bd21629b22eea3516366bd6d52b464ed0f7b7b33f2c9d",
+  },
+  "/data/waterloo-surface-max.bin": {
+    byteLength: 1_193_560,
+    sha256: "fa4674c54b89ce71dd528fec042477815b18aefa31da225b44ca5dded2c10a73",
+  },
+  "/data/context-kings-cross.json": {
+    byteLength: 11_117,
+    sha256: "5456f0521586e1c856ca290fa4779da82efe0777798ca2737fa17219cce7d50a",
+  },
+  "/data/kings-cross-map.json": {
+    byteLength: 5_054_745,
+    sha256: "6e98e2406a52e0004dbdf54435e4aad9435fbd1ad5534c2fc385afc93937304c",
+  },
+  "/data/kings-cross-heights.json": {
+    byteLength: 892,
+    sha256: "7141f741e1a863c21a69d8509b8e2d1165204992cf6bd7381b6f3a684b5e0eae",
+  },
+  "/data/kings-cross-heights.bin": {
+    byteLength: 358_125,
+    sha256: "9c57831a951c3822a30d1f1d34339123a65bb4ff9269af9425df9871e5b76f88",
+  },
+  "/data/kings-cross-validity.bin": {
+    byteLength: 358_125,
+    sha256: "933ceed00b7118fc38e51836dc091313e43818fb20c9918575d1e31febdc1cf4",
+  },
+  "/data/kings-cross-terrain.bin": {
+    byteLength: 1_432_500,
+    sha256: "6462e6fa4f437920edf52ab310552e138e4618b374507a518ff9af7f4feb813e",
+  },
+  "/data/kings-cross-surface-min.bin": {
+    byteLength: 1_432_500,
+    sha256: "25e42b3cac40c91af4807749201241aad9485e0a417a8e848d0e43bc366e862e",
+  },
+  "/data/kings-cross-surface-max.bin": {
+    byteLength: 1_432_500,
+    sha256: "36fb4267c4d4475b7124ae5417b394db0bb0dfaa0b626ac3a40f4c49b9969915",
+  },
+};
 
 /** Current selected-pilot data plus the shared route pack; excludes the generated app shell. */
 export const OFFLINE_PILOT_DATA_BYTES: Readonly<Record<OfflinePilotAreaId, number>> = {
@@ -59,7 +154,10 @@ export interface VerifiedOfflinePilotRecord {
   areaId: OfflinePilotAreaId;
   packVersion: string;
   workerVersion: string;
+  /** Identifies the current app-shell and selected-pilot path set. */
   manifestId: string;
+  /** SHA-256 of the exact path, byte-length and content-hash manifest. */
+  integrityManifestId: string;
   assetCount: number;
   verifiedAt: string;
 }
@@ -76,7 +174,7 @@ export type OfflineWorkerRequest =
       requestId: string;
       areaId: OfflinePilotAreaId;
       packVersion: string;
-      assets: string[];
+      manifest: OfflinePilotIntegrityManifest;
     }
   | {
       type: "VERIFY_PILOT_PACK";
@@ -85,6 +183,7 @@ export type OfflineWorkerRequest =
       areaId: OfflinePilotAreaId;
       packVersion: string;
       assets: string[];
+      integrityManifestId: string;
     }
   | {
       type: "REMOVE_PILOT_PACK";
@@ -101,6 +200,7 @@ export interface OfflineWorkerPackSuccess {
   packVersion: string;
   workerVersion: string;
   assetCount: number;
+  integrityManifestId: string;
 }
 
 export interface OfflineWorkerRemovalSuccess {
@@ -138,7 +238,12 @@ function isAreaId(value: unknown): value is OfflinePilotAreaId {
 function normaliseLocalAsset(value: string, origin: string) {
   try {
     const url = new URL(value, origin);
-    if (url.origin !== origin || url.pathname.startsWith("/api/")) return null;
+    if (
+      url.origin !== origin ||
+      url.pathname.startsWith("/api/") ||
+      url.pathname.startsWith("/.shaderoute/") ||
+      url.pathname === OFFLINE_PILOT_SERVICE_WORKER_URL
+    ) return null;
     return `${url.pathname}${url.search}`;
   } catch {
     return null;
@@ -165,6 +270,92 @@ export function buildOfflinePilotAssetList(
   return [...new Set(assets)].sort();
 }
 
+function bytesToHex(bytes: ArrayBuffer) {
+  return Array.from(new Uint8Array(bytes), (value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+async function sha256Hex(bytes: ArrayBuffer) {
+  if (!globalThis.crypto?.subtle) {
+    throw new Error("This browser cannot cryptographically verify an offline pilot pack.");
+  }
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+  return bytesToHex(digest);
+}
+
+function canonicalIntegrityManifest(
+  areaId: OfflinePilotAreaId,
+  assets: readonly OfflinePilotAssetIntegrity[],
+) {
+  return JSON.stringify([
+    areaId,
+    OFFLINE_PILOT_PACK_VERSION,
+    assets.map(({ path, byteLength, sha256 }) => [path, byteLength, sha256]),
+  ]);
+}
+
+export async function offlinePilotIntegrityManifestId(
+  areaId: OfflinePilotAreaId,
+  assets: readonly OfflinePilotAssetIntegrity[],
+) {
+  const canonical = new TextEncoder().encode(canonicalIntegrityManifest(areaId, assets));
+  const bytes = canonical.buffer.slice(
+    canonical.byteOffset,
+    canonical.byteOffset + canonical.byteLength,
+  ) as ArrayBuffer;
+  return `sha256-${await sha256Hex(bytes)}`;
+}
+
+/**
+ * Builds the exact manifest sent to the service worker. Release-pinned pilot
+ * files use checked-in hashes. Generated app-shell assets are independently
+ * read once here and again by the service worker, so the promoted response must
+ * agree on both byte length and SHA-256 content.
+ */
+export async function buildOfflinePilotIntegrityManifest(
+  areaId: OfflinePilotAreaId,
+  assetPaths: readonly string[],
+  origin = "https://shaderoute.invalid",
+  fetchImplementation: typeof fetch = fetch,
+): Promise<OfflinePilotIntegrityManifest> {
+  const normalisedPaths = assetPaths
+    .map((asset) => normaliseLocalAsset(asset, origin))
+    .filter((asset): asset is string => asset !== null);
+  if (normalisedPaths.length !== assetPaths.length || new Set(normalisedPaths).size !== assetPaths.length) {
+    throw new Error("The offline asset list is incomplete or contains duplicate paths.");
+  }
+
+  const assets = await Promise.all(
+    [...normalisedPaths].sort().map(async (path): Promise<OfflinePilotAssetIntegrity> => {
+      const expected = OFFLINE_PILOT_STATIC_ASSET_INTEGRITY[path];
+      if (expected) return { path, ...expected };
+
+      const response = await fetchImplementation(new URL(path, origin), {
+        cache: "reload",
+        credentials: "same-origin",
+      });
+      if (!response.ok || response.type === "opaque") {
+        throw new Error("An application file could not be read for offline verification.");
+      }
+      const bytes = await response.arrayBuffer();
+      if (bytes.byteLength < 1) {
+        throw new Error("An empty application file cannot be included in an offline pilot pack.");
+      }
+      return {
+        path,
+        byteLength: bytes.byteLength,
+        sha256: await sha256Hex(bytes),
+      };
+    }),
+  );
+
+  return {
+    areaId,
+    packVersion: OFFLINE_PILOT_PACK_VERSION,
+    manifestId: await offlinePilotIntegrityManifestId(areaId, assets),
+    assets,
+  };
+}
+
 /** A stable, non-security fingerprint used to match a verified status to its manifest. */
 export function offlinePilotManifestId(assets: readonly string[]) {
   let hash = 0x811c9dc5;
@@ -186,6 +377,8 @@ function validRecord(value: unknown): value is VerifiedOfflinePilotRecord {
       record.workerVersion.length > 0 &&
       typeof record.manifestId === "string" &&
       /^fnv1a-[0-9a-f]{8}$/.test(record.manifestId) &&
+      typeof record.integrityManifestId === "string" &&
+      /^sha256-[0-9a-f]{64}$/.test(record.integrityManifestId) &&
       Number.isSafeInteger(record.assetCount) &&
       record.assetCount! > 0 &&
       typeof record.verifiedAt === "string" &&
@@ -266,19 +459,41 @@ export function removeVerifiedOfflinePilot(
   }
 }
 
-export function createOfflineWorkerRequest(
-  type: "PREPARE_PILOT_PACK" | "VERIFY_PILOT_PACK",
+export function createOfflineWorkerPreparationRequest(
+  areaId: OfflinePilotAreaId,
+  manifest: OfflinePilotIntegrityManifest,
+  requestId: string,
+): OfflineWorkerRequest {
+  if (manifest.areaId !== areaId || manifest.packVersion !== OFFLINE_PILOT_PACK_VERSION) {
+    throw new Error("The offline integrity manifest does not match the selected pilot.");
+  }
+  return {
+    type: "PREPARE_PILOT_PACK",
+    protocolVersion: OFFLINE_PILOT_PROTOCOL_VERSION,
+    requestId,
+    areaId,
+    packVersion: OFFLINE_PILOT_PACK_VERSION,
+    manifest: {
+      ...manifest,
+      assets: manifest.assets.map((asset) => ({ ...asset })),
+    },
+  };
+}
+
+export function createOfflineWorkerVerificationRequest(
   areaId: OfflinePilotAreaId,
   assets: readonly string[],
+  integrityManifestId: string,
   requestId: string,
 ): OfflineWorkerRequest {
   return {
-    type,
+    type: "VERIFY_PILOT_PACK",
     protocolVersion: OFFLINE_PILOT_PROTOCOL_VERSION,
     requestId,
     areaId,
     packVersion: OFFLINE_PILOT_PACK_VERSION,
     assets: [...assets],
+    integrityManifestId,
   };
 }
 

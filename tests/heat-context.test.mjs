@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { fetchHeatContext } from "../app/api/heat-context/route.ts";
 import {
   parseUkhsaHeatContext,
   unavailableHeatContext,
@@ -88,6 +89,31 @@ test("fallback is neutral, regional and contains no user or route details", () =
   });
 });
 
+test("heat-context deadline settles when fetch ignores AbortSignal", { timeout: 500 }, async () => {
+  const started = performance.now();
+  await assert.rejects(
+    fetchHeatContext({
+      timeoutMs: 15,
+      fetchImplementation: () => new Promise(() => undefined),
+    }),
+    (error) => error instanceof DOMException && error.name === "TimeoutError",
+  );
+  assert.ok(performance.now() - started < 250);
+});
+
+test("heat-context deadline also covers stalled response-body parsing", { timeout: 500 }, async () => {
+  await assert.rejects(
+    fetchHeatContext({
+      timeoutMs: 15,
+      fetchImplementation: async () => new Response(
+        new ReadableStream({ start() {} }),
+        { headers: { "Content-Type": "application/json" } },
+      ),
+    }),
+    (error) => error instanceof DOMException && error.name === "TimeoutError",
+  );
+});
+
 test("handler declares a fixed official endpoint, bounded timeout and public caching", async () => {
   const [handler, component] = await Promise.all([
     readFile(new URL("../app/api/heat-context/route.ts", import.meta.url), "utf8"),
@@ -100,6 +126,7 @@ test("handler declares a fixed official endpoint, bounded timeout and public cac
   assert.match(handler, /readBoundedJson\(response, MAX_UPSTREAM_RESPONSE_BYTES\)/);
   assert.match(handler, /new AbortController\(\)/);
   assert.match(handler, /signal:\s*controller\.signal/);
+  assert.match(handler, /raceWithAbort/);
   assert.match(handler, /public, max-age=120, s-maxage=600/);
   assert.match(handler, /status:\s*503/);
   assert.doesNotMatch(handler, /latitude|longitude|coordinates/i);

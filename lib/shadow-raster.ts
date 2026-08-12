@@ -14,6 +14,14 @@ export interface GroundShadowFrame {
   shadowPercent: number;
 }
 
+export interface GroundShadowRenderOptions {
+  /**
+   * Benchmark-only reference switch. Production callers should omit it so
+   * already-painted targets are rejected before elevation-plane reads.
+   */
+  skipPaintedTargetFastPath?: boolean;
+}
+
 const BNG_PROJECTION =
   "+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +towgs84=446.448,-125.157,542.06,0.1502,0.247,0.8421,-20.4894 +units=m +no_defs";
 const OBSERVER_HEIGHT_METRES = 1.5;
@@ -112,6 +120,7 @@ export function renderGroundShadowFrame(
   grid: HeightGrid,
   date: Date,
   centre: Coordinate,
+  options: GroundShadowRenderOptions = {},
 ): GroundShadowFrame {
   const { width, height, resolutionMetres, heightStepMetres } = grid.metadata;
   const cellCount = width * height;
@@ -155,6 +164,7 @@ export function renderGroundShadowFrame(
   }
 
   const mask = new Uint8Array(cellCount);
+  const skipPaintedTargetFastPath = options.skipPaintedTargetFastPath ?? true;
   let maximumHeightSteps = 0;
   let maximumAbsoluteSurface = Number.NEGATIVE_INFINITY;
   let minimumAbsoluteTerrain = Number.POSITIVE_INFINITY;
@@ -218,7 +228,13 @@ export function renderGroundShadowFrame(
         // A cell already painted by a footprint or a shorter cast cannot
         // change again. Check it before reading and validating the elevation
         // planes; later offsets commonly overlap most of the existing mask.
-        if (mask[targetIndex] === 0) {
+        if (skipPaintedTargetFastPath && mask[targetIndex] !== 0) {
+          sourceIndex += 1;
+          targetIndex += 1;
+          continue;
+        }
+
+        {
           const sourceIsValid = !grid.validity || grid.validity[sourceIndex] === 255;
           const targetIsValid = !grid.validity || grid.validity[targetIndex] === 255;
           const sourceSurface = grid.maximumSurfaceElevations?.[sourceIndex];
@@ -229,7 +245,12 @@ export function renderGroundShadowFrame(
             Number.isFinite(targetTerrain)
               ? sourceSurface! > targetTerrain! + requiredRelativeHeight
               : grid.heights[sourceIndex] > requiredHeightSteps;
-          if (sourceIsValid && targetIsValid && absoluteRayCleared) {
+          if (
+            mask[targetIndex] === 0 &&
+            sourceIsValid &&
+            targetIsValid &&
+            absoluteRayCleared
+          ) {
             mask[targetIndex] = 1;
             shadowCellCount += 1;
           }

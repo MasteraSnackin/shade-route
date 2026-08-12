@@ -467,21 +467,47 @@ main {
   background: white;
 }
 
-.local-place-results {
+.local-place-popup {
   position: absolute;
   z-index: 12;
   top: calc(100% + 4px);
   left: 0;
   width: min(320px, calc(100vw - 100px));
-  max-height: 270px;
-  margin: 0;
-  padding: 5px;
+  max-height: 330px;
   overflow-y: auto;
   border: 1px solid var(--line-strong);
   border-radius: 10px;
   background: white;
   box-shadow: 0 12px 28px rgba(24, 49, 42, 0.2);
+}
+
+.local-place-results {
+  margin: 0;
+  padding: 5px;
   list-style: none;
+}
+
+.local-place-load-error {
+  padding: 9px 10px;
+  display: grid;
+  gap: 7px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-soft);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.local-place-load-error button {
+  min-height: 44px;
+  padding: 0 10px;
+  justify-self: start;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--green-dark);
+  font: inherit;
+  font-weight: 750;
+  cursor: pointer;
 }
 
 .local-place-results li {
@@ -994,6 +1020,63 @@ select:hover {
   font-size: 12px;
   font-weight: 650;
   box-shadow: 0 4px 12px rgba(24, 49, 42, 0.1);
+}
+
+.map-status.is-picking {
+  max-width: min(440px, calc(100% - 86px));
+  display: grid;
+  gap: 8px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.map-status.is-picking button {
+  min-height: 44px;
+  padding: 0 11px;
+  justify-self: start;
+  border: 1px solid var(--green);
+  border-radius: 8px;
+  background: var(--green);
+  color: white;
+  font: inherit;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.map-pick-centre {
+  position: absolute;
+  z-index: 3;
+  top: 50%;
+  left: 50%;
+  width: 28px;
+  height: 28px;
+  border: 3px solid white;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 0 2px var(--green-dark), 0 3px 10px rgba(24, 49, 42, 0.25);
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
+.map-pick-centre::before,
+.map-pick-centre::after {
+  position: absolute;
+  content: "";
+  background: white;
+}
+
+.map-pick-centre::before {
+  top: 10px;
+  left: 3px;
+  width: 16px;
+  height: 2px;
+}
+
+.map-pick-centre::after {
+  top: 3px;
+  left: 10px;
+  width: 2px;
+  height: 16px;
 }
 
 .map-inspection-banner {

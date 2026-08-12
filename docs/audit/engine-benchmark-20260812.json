@@ -1,0 +1,40 @@
+{
+  "recordedAt": "2026-08-12",
+  "node": "v24.14.0",
+  "areaId": "kings-cross",
+  "gridCells": 358125,
+  "gridPlanes": 5,
+  "warmups": 5,
+  "iterations": 25,
+  "routeSamples": [221, 224, 228],
+  "shadowDate": "2026-06-21T05:00:00.000Z",
+  "shadowVerification": {
+    "shadowPercent": 96.11867364746945,
+    "pixelHash": "46d567aa"
+  },
+  "optimisation": {
+    "medianReductionPercent": 6.1
+  },
+  "results": [
+    {
+      "name": "reference-ground-shadow-frame",
+      "medianMs": 89.327,
+      "p95Ms": 221.69
+    },
+    {
+      "name": "optimised-ground-shadow-frame",
+      "medianMs": 83.92,
+      "p95Ms": 84.707
+    },
+    {
+      "name": "nine-time-three-route-eight-journey-score-sweep",
+      "medianMs": 55.461,
+      "p95Ms": 56.435
+    },
+    {
+      "name": "scoring-grid-transfer-copy",
+      "medianMs": 0.301,
+      "p95Ms": 0.589
+    }
+  ]
+}

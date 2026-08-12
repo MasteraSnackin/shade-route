@@ -166,6 +166,12 @@ development and tests. Do not expose private provider keys to browser code.
 
 ![ShadeRoute mobile audit](docs/audit/after-mobile-390.png)
 
+![ShadeRoute after keyboard map-centre selection](docs/audit/map-centre-keyboard.png)
+
+[Watch the shade-time interaction evidence (MP4)](docs/audit/shade-time-movement.mp4).
+The recording shows the controlled clear-sky model changing from sunrise through
+late morning; it is interface evidence, not field-validation evidence.
+
 A public live URL has not been established because Sites is not enabled for the
 current workspace. Run the project locally using the instructions above; do not
 interpret a missing deployment URL as evidence that the application has been
@@ -268,6 +274,7 @@ template are in [`validation/`](validation/README.md).
 - Expand geography only through tiled, provenance-aware model packs.
 
 See [RESEARCHER.md](RESEARCHER.md) for the evidence-ranked technical roadmap.
+The task-by-task completion record is in [TASK-TRACEABILITY.md](TASK-TRACEABILITY.md).
 
 ## Contributing
 

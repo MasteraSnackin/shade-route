@@ -3,8 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   buildOfflinePilotAssetList,
+  buildOfflinePilotIntegrityManifest,
   createOfflineWorkerRemovalRequest,
-  createOfflineWorkerRequest,
+  createOfflineWorkerPreparationRequest,
+  createOfflineWorkerVerificationRequest,
   OFFLINE_PILOT_DATA_BYTES,
   OFFLINE_PILOT_PACK_VERSION,
   OFFLINE_PILOT_SERVICE_WORKER_URL,
@@ -223,12 +225,27 @@ export function OfflinePilotPreparation({
         trackWaitingUpdate(registration);
         const response = await sendWorkerRequest(
           worker,
-          createOfflineWorkerRequest("VERIFY_PILOT_PACK", areaId, assets, requestId()),
+          createOfflineWorkerVerificationRequest(
+            areaId,
+            assets,
+            saved.integrityManifestId,
+            requestId(),
+          ),
         );
         if (cancelled) return;
-        if (!response.ok) {
+        if (
+          !response.ok ||
+          response.type !== "PACK_VERIFIED" ||
+          response.integrityManifestId !== saved.integrityManifestId
+        ) {
           if (storage) removeVerifiedOfflinePilot(areaId, storage);
-          publishStatus({ phase: "stale", record: null, message: response.message });
+          publishStatus({
+            phase: "stale",
+            record: null,
+            message: response.ok
+              ? "The saved pilot pack no longer matches its integrity record. Prepare it again before relying on offline access."
+              : response.message,
+          });
           return;
         }
         publishStatus({ phase: "ready", record: saved, message: null });
@@ -257,21 +274,30 @@ export function OfflinePilotPreparation({
       message: `Downloading and checking the ${areaName} pilot pack…`,
     });
     try {
+      const integrityManifest = await buildOfflinePilotIntegrityManifest(
+        areaId,
+        assets,
+        browserOrigin,
+      );
       const { registration, worker } = await serviceWorkerRegistration();
       trackWaitingUpdate(registration);
       const response = await sendWorkerRequest(
         worker,
-        createOfflineWorkerRequest("PREPARE_PILOT_PACK", areaId, assets, requestId()),
+        createOfflineWorkerPreparationRequest(areaId, integrityManifest, requestId()),
       );
       if (!response.ok) throw new Error(response.message);
       if (response.type !== "PACK_PREPARED") {
         throw new Error("The offline worker did not confirm preparation.");
+      }
+      if (response.integrityManifestId !== integrityManifest.manifestId) {
+        throw new Error("The offline worker did not confirm the expected integrity manifest.");
       }
       const record: VerifiedOfflinePilotRecord = {
         areaId,
         packVersion: response.packVersion,
         workerVersion: response.workerVersion,
         manifestId,
+        integrityManifestId: response.integrityManifestId,
         assetCount: response.assetCount,
         verifiedAt: new Date().toISOString(),
       };
@@ -374,7 +400,7 @@ export function OfflinePilotPreparation({
 
       {ready && (
         <p className={styles.verifiedDetail}>
-          Last downloaded and checked {readableVerifiedDate(ready.verifiedAt)} · {ready.assetCount} files
+          Last downloaded and integrity-checked {readableVerifiedDate(ready.verifiedAt)} · {ready.assetCount} files
         </p>
       )}
       {status.message && (

@@ -19,6 +19,11 @@ interface PlaceOption extends NamedPoint {
   kind: string;
 }
 
+type ContextLoadState =
+  | { kind: "loading"; areaId: string; options: PlaceOption[] }
+  | { kind: "available"; areaId: string; options: PlaceOption[] }
+  | { kind: "error"; areaId: string; options: PlaceOption[] };
+
 interface LocalPlaceSearchProps {
   area: PilotArea;
   endpoint: NamedPoint;
@@ -47,65 +52,88 @@ function pilotOptions(area: PilotArea): PlaceOption[] {
   }));
 }
 
+function contextOptions(value: unknown, area: PilotArea): PlaceOption[] {
+  if (!value || typeof value !== "object" || !Array.isArray((value as ContextData).features)) {
+    throw new Error("Local place records were not in the expected format.");
+  }
+  const seenNames = new Set<string>();
+  return (value as ContextData).features!.flatMap((feature, index): PlaceOption[] => {
+    const name = feature?.name?.trim();
+    const coordinate = feature?.coordinate;
+    const normalisedName = name?.toLocaleLowerCase("en-GB");
+    if (
+      !name ||
+      !normalisedName ||
+      seenNames.has(normalisedName) ||
+      !Array.isArray(coordinate) ||
+      coordinate.length !== 2 ||
+      !coordinate.every(Number.isFinite) ||
+      !insideArea(coordinate as [number, number], area)
+    ) return [];
+    seenNames.add(normalisedName);
+    return [{
+      id: feature.id ?? `${area.id}-context-${index}`,
+      name,
+      lon: coordinate[0],
+      lat: coordinate[1],
+      kind: CATEGORY_LABELS[feature.category ?? ""] ?? "Local landmark",
+    }];
+  });
+}
+
+async function loadLocalPlaceOptions(
+  area: PilotArea,
+  options: { signal?: AbortSignal; fetchImplementation?: typeof fetch } = {},
+) {
+  const response = await (options.fetchImplementation ?? fetch)(`/data/context-${area.id}.json`, {
+    signal: options.signal,
+  });
+  if (!response.ok) throw new Error("Local place records could not be loaded.");
+  return contextOptions(await response.json(), area);
+}
+
 export function LocalPlaceSearch({ area, endpoint, endpointLabel, onSelect }: LocalPlaceSearchProps) {
   const inputId = useId();
   const listboxId = useId();
   const helpId = useId();
-  const [contextState, setContextState] = useState<{ areaId: string; options: PlaceOption[] }>({
+  const [contextState, setContextState] = useState<ContextLoadState>({
+    kind: "loading",
     areaId: "",
     options: [],
   });
+  const [retrySequence, setRetrySequence] = useState(0);
   const [editingQuery, setEditingQuery] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const query = editingQuery ?? endpoint.name;
 
   useEffect(() => {
-    let cancelled = false;
-    fetch(`/data/context-${area.id}.json`)
-      .then((response) => {
-        if (!response.ok) throw new Error("Local place records could not be loaded.");
-        return response.json() as Promise<ContextData>;
-      })
-      .then((context) => {
-        if (cancelled) return;
-        const seenNames = new Set<string>();
-        const options = (context.features ?? []).flatMap((feature, index): PlaceOption[] => {
-          const name = feature.name?.trim();
-          const coordinate = feature.coordinate;
-          const normalisedName = name?.toLocaleLowerCase("en-GB");
-          if (
-            !name ||
-            !normalisedName ||
-            seenNames.has(normalisedName) ||
-            !coordinate ||
-            coordinate.length !== 2 ||
-            !coordinate.every(Number.isFinite) ||
-            !insideArea(coordinate, area)
-          ) return [];
-          seenNames.add(normalisedName);
-          return [{
-            id: feature.id ?? `${area.id}-context-${index}`,
-            name,
-            lon: coordinate[0],
-            lat: coordinate[1],
-            kind: CATEGORY_LABELS[feature.category ?? ""] ?? "Local landmark",
-          }];
-        });
-        setContextState({ areaId: area.id, options });
+    let current = true;
+    const controller = new AbortController();
+    void loadLocalPlaceOptions(area, { signal: controller.signal })
+      .then((loadedOptions) => {
+        if (!current) return;
+        setContextState({ kind: "available", areaId: area.id, options: loadedOptions });
       })
       .catch(() => {
-        if (!cancelled) setContextState({ areaId: area.id, options: [] });
+        if (current && !controller.signal.aborted) {
+          setContextState({ kind: "error", areaId: area.id, options: [] });
+        }
       });
     return () => {
-      cancelled = true;
+      current = false;
+      controller.abort();
     };
-  }, [area]);
+  }, [area, retrySequence]);
+
+  const currentContextState: ContextLoadState = contextState.areaId === area.id
+    ? contextState
+    : { kind: "loading", areaId: area.id, options: [] };
 
   const options = useMemo(() => [
     ...pilotOptions(area),
-    ...(contextState.areaId === area.id ? contextState.options : []),
-  ], [area, contextState]);
+    ...currentContextState.options,
+  ], [area, currentContextState.options]);
   const filteredOptions = useMemo(() => {
     const normalisedQuery = query === endpoint.name ? "" : query.trim().toLocaleLowerCase("en-GB");
     const matches = normalisedQuery
@@ -179,34 +207,52 @@ export function LocalPlaceSearch({ area, endpoint, endpointLabel, onSelect }: Lo
         onKeyDown={handleKeyDown}
       />
       {open && (
-        <ul id={listboxId} className="local-place-results" role="listbox" aria-label={`${endpointLabel} places`}>
-          {filteredOptions.length ? filteredOptions.map((option, index) => (
-            <li
-              key={option.id}
-              id={`${listboxId}-${option.id}`}
-              role="option"
-              aria-selected={index === safeActiveIndex}
-              tabIndex={-1}
-              onPointerDown={(event) => event.preventDefault()}
-              onClick={() => choose(option)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") choose(option);
-              }}
-              onMouseEnter={() => setActiveIndex(index)}
-            >
-              <strong>{option.name}</strong>
-              <span>{option.kind}</span>
-            </li>
-          )) : (
-            <li className="is-empty" role="option" aria-selected="false">No bundled place matches that search.</li>
-          )}
-        </ul>
+        <div className="local-place-popup">
+          {currentContextState.kind === "error" ? (
+            <div className="local-place-load-error" role="status">
+              <span>Local amenity places could not be loaded. The two pilot landmarks are still available.</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setContextState({ kind: "loading", areaId: area.id, options: [] });
+                  setRetrySequence((current) => current + 1);
+                }}
+              >
+                Retry local places
+              </button>
+            </div>
+          ) : null}
+          <ul id={listboxId} className="local-place-results" role="listbox" aria-label={`${endpointLabel} places`}>
+            {filteredOptions.length ? filteredOptions.map((option, index) => (
+              <li
+                key={option.id}
+                id={`${listboxId}-${option.id}`}
+                role="option"
+                aria-selected={index === safeActiveIndex}
+                tabIndex={-1}
+                onPointerDown={(event) => event.preventDefault()}
+                onClick={() => choose(option)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") choose(option);
+                }}
+                onMouseEnter={() => setActiveIndex(index)}
+              >
+                <strong>{option.name}</strong>
+                <span>{option.kind}</span>
+              </li>
+            )) : (
+              <li className="is-empty" role="option" aria-selected="false">No bundled place matches that search.</li>
+            )}
+          </ul>
+        </div>
       )}
       <small id={helpId} className="visually-hidden">
         Search pilot landmarks and partial local amenity records stored in this data pack. Use the map button for an exact point.
       </small>
       <span className="visually-hidden" aria-live="polite">
-        {open ? `${filteredOptions.length} local place ${filteredOptions.length === 1 ? "match" : "matches"}.` : ""}
+        {open
+          ? `${filteredOptions.length} local place ${filteredOptions.length === 1 ? "match" : "matches"}.${currentContextState.kind === "error" ? " Local amenity places are unavailable; pilot landmarks remain available." : ""}`
+          : ""}
       </span>
     </div>
   );

@@ -1,16 +1,21 @@
 import assert from "node:assert/strict";
+import { createHash, webcrypto } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 
 import {
   buildOfflinePilotAssetList,
+  buildOfflinePilotIntegrityManifest,
   createOfflineWorkerRemovalRequest,
-  createOfflineWorkerRequest,
+  createOfflineWorkerPreparationRequest,
+  createOfflineWorkerVerificationRequest,
   OFFLINE_PILOT_DATA_ASSETS,
   OFFLINE_PILOT_DATA_BYTES,
   OFFLINE_PILOT_PACK_VERSION,
+  OFFLINE_PILOT_STATIC_ASSET_INTEGRITY,
   OFFLINE_PILOT_STORAGE_KEY,
+  offlinePilotIntegrityManifestId,
   offlinePilotManifestId,
   readVerifiedOfflinePilot,
   removeVerifiedOfflinePilot,
@@ -32,7 +37,11 @@ function memoryStorage() {
   };
 }
 
-function serviceWorkerHarness(source, failingPath = null) {
+function serviceWorkerHarness(source, options = {}) {
+  const {
+    failingPath = null,
+    responseBody = (path) => `asset:${path}`,
+  } = options;
   const origin = "https://shade.example";
   const handlers = {};
   const stores = new Map();
@@ -86,10 +95,14 @@ function serviceWorkerHarness(source, failingPath = null) {
     Date,
     Error,
     Promise,
-    fetch: async (request) =>
-      cacheKey(request) === failingPath
+    TextEncoder,
+    crypto: webcrypto,
+    fetch: async (request) => {
+      const path = cacheKey(request);
+      return path === failingPath
         ? new Response("Unavailable", { status: 503 })
-        : new Response(`asset:${cacheKey(request)}`, { status: 200 }),
+        : new Response(responseBody(path), { status: 200 });
+    },
   });
   return { caches, handlers, stores, LocalRequest };
 }
@@ -104,6 +117,31 @@ async function dispatchWorkerMessage(harness, data) {
   });
   await pending;
   return response;
+}
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+async function syntheticIntegrityManifest(
+  areaId,
+  paths,
+  responseBody = (path) => `asset:${path}`,
+) {
+  const assets = [...paths].sort().map((path) => {
+    const body = responseBody(path);
+    return {
+      path,
+      byteLength: Buffer.byteLength(body),
+      sha256: sha256(body),
+    };
+  });
+  return {
+    areaId,
+    packVersion: OFFLINE_PILOT_PACK_VERSION,
+    manifestId: await offlinePilotIntegrityManifestId(areaId, assets),
+    assets,
+  };
 }
 
 test("each offline manifest contains only the selected pilot data plus shared runtime assets", () => {
@@ -129,7 +167,7 @@ test("each offline manifest contains only the selected pilot data plus shared ru
   assert.deepEqual(waterloo, [...waterloo].sort());
 });
 
-test("the declared data assets match every file referenced by height metadata", async () => {
+test("the versioned static manifest matches every selected-pilot byte and SHA-256 digest", async () => {
   for (const areaId of ["waterloo", "kings-cross"]) {
     const metadata = JSON.parse(
       await readFile(new URL(`../public/data/${areaId}-heights.json`, import.meta.url), "utf8"),
@@ -147,6 +185,14 @@ test("the declared data assets match every file referenced by height metadata", 
     assert.ok(declared.includes(`/data/${areaId}-map.json`));
     assert.ok(declared.includes(`/data/context-${areaId}.json`));
 
+    for (const asset of ["/favicon.svg", "/data/pilot-routes.json", ...declared]) {
+      const contents = await readFile(new URL(`../public${asset}`, import.meta.url));
+      const expected = OFFLINE_PILOT_STATIC_ASSET_INTEGRITY[asset];
+      assert.ok(expected, `${asset} has no pinned integrity entry`);
+      assert.equal(contents.byteLength, expected.byteLength, `${asset} byte length changed`);
+      assert.equal(sha256(contents), expected.sha256, `${asset} SHA-256 changed`);
+    }
+
     const declaredBytes = await Promise.all(
       ["/data/pilot-routes.json", ...declared].map(async (asset) =>
         (await stat(new URL(`../public${asset}`, import.meta.url))).size),
@@ -158,6 +204,51 @@ test("the declared data assets match every file referenced by height metadata", 
   }
 });
 
+test("the complete manifest pins generated runtime assets by bytes and SHA-256", async () => {
+  const paths = buildOfflinePilotAssetList(
+    "waterloo",
+    ["/_next/static/app.js", "/_next/static/app.css"],
+    "https://shade.example",
+  );
+  const bodies = new Map([
+    ["/", "<!doctype html><title>ShadeRoute</title>"],
+    ["/_next/static/app.js", "console.log('shade-route');"],
+    ["/_next/static/app.css", ":root{color-scheme:light}"],
+  ]);
+  const fetched = [];
+  const fetchRuntime = async (input) => {
+    const path = new URL(input).pathname;
+    fetched.push(path);
+    return new Response(bodies.get(path), { status: 200 });
+  };
+
+  const one = await buildOfflinePilotIntegrityManifest(
+    "waterloo",
+    paths,
+    "https://shade.example",
+    fetchRuntime,
+  );
+  const two = await buildOfflinePilotIntegrityManifest(
+    "waterloo",
+    [...paths].reverse(),
+    "https://shade.example",
+    fetchRuntime,
+  );
+
+  assert.match(one.manifestId, /^sha256-[0-9a-f]{64}$/);
+  assert.deepEqual(one, two);
+  assert.deepEqual(
+    [...new Set(fetched)].sort(),
+    ["/", "/_next/static/app.css", "/_next/static/app.js"],
+    "release-pinned public files should not be fetched to construct the manifest",
+  );
+  for (const [path, body] of bodies) {
+    const entry = one.assets.find((candidate) => candidate.path === path);
+    assert.equal(entry.byteLength, Buffer.byteLength(body));
+    assert.equal(entry.sha256, sha256(body));
+  }
+});
+
 test("verified readiness is versioned, persisted per pilot and rejects malformed records", () => {
   const storage = memoryStorage();
   const assets = buildOfflinePilotAssetList("waterloo", ["/_next/static/app.js"]);
@@ -166,6 +257,7 @@ test("verified readiness is versioned, persisted per pilot and rejects malformed
     packVersion: OFFLINE_PILOT_PACK_VERSION,
     workerVersion: "worker-v1",
     manifestId: offlinePilotManifestId(assets),
+    integrityManifestId: `sha256-${"a".repeat(64)}`,
     assetCount: assets.length,
     verifiedAt: "2026-08-12T14:15:00.000Z",
   };
@@ -181,7 +273,7 @@ test("verified readiness is versioned, persisted per pilot and rejects malformed
   writeVerifiedOfflinePilot(kingsCrossRecord, storage);
   assert.deepEqual(readVerifiedOfflinePilot("waterloo", storage), record);
   assert.deepEqual(readVerifiedOfflinePilot("kings-cross", storage), kingsCrossRecord);
-  assert.equal(JSON.parse(storage.getItem(OFFLINE_PILOT_STORAGE_KEY)).schemaVersion, 1);
+  assert.equal(JSON.parse(storage.getItem(OFFLINE_PILOT_STORAGE_KEY)).schemaVersion, 2);
 
   removeVerifiedOfflinePilot("waterloo", storage);
   assert.deepEqual(readVerifiedOfflinePilot("kings-cross", storage), kingsCrossRecord);
@@ -200,26 +292,45 @@ test("verified readiness is versioned, persisted per pilot and rejects malformed
   );
 });
 
-test("manifest fingerprints and worker requests are deterministic and version-bound", () => {
+test("manifest fingerprints and worker requests are deterministic and version-bound", async () => {
   const one = ["/b", "/a", "/a"];
   const two = ["/a", "/a", "/b"];
   assert.equal(offlinePilotManifestId(one), offlinePilotManifestId(two));
   assert.notEqual(offlinePilotManifestId(one), offlinePilotManifestId(["/a", "/c"]));
 
+  const manifest = await syntheticIntegrityManifest("waterloo", ["/", "/data/a"]);
+
   assert.deepEqual(
-    createOfflineWorkerRequest("PREPARE_PILOT_PACK", "waterloo", ["/", "/data/a"], "request-1"),
+    createOfflineWorkerPreparationRequest("waterloo", manifest, "request-1"),
     {
       type: "PREPARE_PILOT_PACK",
-      protocolVersion: 1,
+      protocolVersion: 2,
       requestId: "request-1",
       areaId: "waterloo",
       packVersion: OFFLINE_PILOT_PACK_VERSION,
+      manifest,
+    },
+  );
+  assert.deepEqual(
+    createOfflineWorkerVerificationRequest(
+      "waterloo",
+      ["/", "/data/a"],
+      manifest.manifestId,
+      "verify-1",
+    ),
+    {
+      type: "VERIFY_PILOT_PACK",
+      protocolVersion: 2,
+      requestId: "verify-1",
+      areaId: "waterloo",
+      packVersion: OFFLINE_PILOT_PACK_VERSION,
       assets: ["/", "/data/a"],
+      integrityManifestId: manifest.manifestId,
     },
   );
   assert.deepEqual(createOfflineWorkerRemovalRequest("kings-cross", "remove-1"), {
     type: "REMOVE_PILOT_PACK",
-    protocolVersion: 1,
+    protocolVersion: 2,
     requestId: "remove-1",
     areaId: "kings-cross",
   });
@@ -234,7 +345,9 @@ test("the service worker stages and verifies replacements without caching online
   assert.match(source, /VERIFY_PILOT_PACK/);
   assert.match(source, /REMOVE_PILOT_PACK/);
   assert.match(source, /STAGING_MARKER/);
-  assert.match(source, /cacheContainsEveryAsset\(finalCache, assets\)/);
+  assert.match(source, /cacheContainsEveryAsset\(finalCache, manifest\)/);
+  assert.match(source, /responseMatchesAsset/);
+  assert.match(source, /crypto\.subtle\.digest\("SHA-256"/);
   assert.match(source, /oldReadyCaches/);
   assert.doesNotMatch(installHandler, /event\.waitUntil\(self\.skipWaiting\(\)\)/);
   assert.match(source, /ACTIVATE_OFFLINE_UPDATE/);
@@ -244,10 +357,11 @@ test("the service worker stages and verifies replacements without caching online
 
 test("service-worker preparation is atomic and leaves API requests untouched", async () => {
   const source = await readFile(new URL("../public/shade-route-sw.js", import.meta.url), "utf8");
-  const request = createOfflineWorkerRequest(
-    "PREPARE_PILOT_PACK",
+  const paths = ["/", "/data/pilot-routes.json", "/data/waterloo-map.json"];
+  const manifest = await syntheticIntegrityManifest("waterloo", paths);
+  const request = createOfflineWorkerPreparationRequest(
     "waterloo",
-    ["/", "/data/pilot-routes.json", "/data/waterloo-map.json"],
+    manifest,
     "atomic-test",
   );
   const harness = serviceWorkerHarness(source);
@@ -255,26 +369,36 @@ test("service-worker preparation is atomic and leaves API requests untouched", a
     `shaderoute-offline-pilot:waterloo:ready:${OFFLINE_PILOT_PACK_VERSION}:old`,
   );
   await oldCache.put("/", new Response("old", { status: 200 }));
+  const otherAreaCacheName =
+    `shaderoute-offline-pilot:kings-cross:ready:${OFFLINE_PILOT_PACK_VERSION}:keep`;
+  const otherAreaCache = await harness.caches.open(otherAreaCacheName);
+  await otherAreaCache.put("/", new Response("other pilot", { status: 200 }));
 
   const prepared = await dispatchWorkerMessage(harness, request);
   assert.equal(prepared.ok, true);
   assert.equal(prepared.type, "PACK_PREPARED");
+  assert.equal(prepared.integrityManifestId, manifest.manifestId);
   const cacheNames = await harness.caches.keys();
   assert.equal(cacheNames.some((name) => name.endsWith(":old")), false);
   assert.equal(cacheNames.some((name) => name.includes(":staging:")), false);
-  assert.equal(cacheNames.filter((name) => name.includes(":ready:")).length, 1);
+  assert.equal(
+    cacheNames.filter((name) => name.startsWith("shaderoute-offline-pilot:waterloo:ready:")).length,
+    1,
+  );
+  assert.ok(cacheNames.includes(otherAreaCacheName));
 
   const verified = await dispatchWorkerMessage(
     harness,
-    createOfflineWorkerRequest(
-      "VERIFY_PILOT_PACK",
+    createOfflineWorkerVerificationRequest(
       "waterloo",
-      request.assets,
+      paths,
+      manifest.manifestId,
       "verify-test",
     ),
   );
   assert.equal(verified.ok, true);
   assert.equal(verified.type, "PACK_VERIFIED");
+  assert.equal(verified.integrityManifestId, manifest.manifestId);
 
   let intercepted = false;
   harness.handlers.fetch({
@@ -283,7 +407,9 @@ test("service-worker preparation is atomic and leaves API requests untouched", a
   });
   assert.equal(intercepted, false);
 
-  const failureHarness = serviceWorkerHarness(source, "/data/waterloo-map.json");
+  const failureHarness = serviceWorkerHarness(source, {
+    failingPath: "/data/waterloo-map.json",
+  });
   const previous = await failureHarness.caches.open(
     `shaderoute-offline-pilot:waterloo:ready:${OFFLINE_PILOT_PACK_VERSION}:previous`,
   );
@@ -293,6 +419,70 @@ test("service-worker preparation is atomic and leaves API requests untouched", a
   assert.equal(failed.code, "download-failed");
   assert.ok((await failureHarness.caches.keys()).some((name) => name.endsWith(":previous")));
   assert.equal((await failureHarness.caches.keys()).some((name) => name.includes(":staging:")), false);
+});
+
+test("200 responses with truncated or corrupt bytes never replace a verified pack", async (t) => {
+  const source = await readFile(new URL("../public/shade-route-sw.js", import.meta.url), "utf8");
+  const paths = ["/", "/data/pilot-routes.json", "/data/waterloo-map.json"];
+  const manifest = await syntheticIntegrityManifest("waterloo", paths);
+  const request = createOfflineWorkerPreparationRequest("waterloo", manifest, "corruption-test");
+
+  for (const [name, corruptBody] of [
+    ["truncated", "asset:/data/waterloo-map.jso"],
+    ["same-length corruption", "Asset:/data/waterloo-map.json"],
+  ]) {
+    await t.test(name, async () => {
+      const harness = serviceWorkerHarness(source, {
+        responseBody: (path) => path === "/data/waterloo-map.json"
+          ? corruptBody
+          : `asset:${path}`,
+      });
+      const previousName = `shaderoute-offline-pilot:waterloo:ready:${OFFLINE_PILOT_PACK_VERSION}:previous`;
+      const previous = await harness.caches.open(previousName);
+      await previous.put("/", new Response("previous", { status: 200 }));
+
+      const failed = await dispatchWorkerMessage(harness, request);
+      assert.equal(failed.ok, false);
+      assert.equal(failed.code, "verification-failed");
+      const cacheNames = await harness.caches.keys();
+      assert.ok(cacheNames.includes(previousName), "the previous pack must survive a corrupt refresh");
+      assert.equal(cacheNames.some((cacheName) => cacheName.includes(":staging:")), false);
+      assert.deepEqual(
+        cacheNames.filter((cacheName) => cacheName.includes(":ready:")),
+        [previousName],
+      );
+    });
+  }
+});
+
+test("verification detects and removes a ready cache corrupted after promotion", async () => {
+  const source = await readFile(new URL("../public/shade-route-sw.js", import.meta.url), "utf8");
+  const paths = ["/", "/data/pilot-routes.json", "/data/waterloo-map.json"];
+  const manifest = await syntheticIntegrityManifest("waterloo", paths);
+  const harness = serviceWorkerHarness(source);
+  const prepared = await dispatchWorkerMessage(
+    harness,
+    createOfflineWorkerPreparationRequest("waterloo", manifest, "prepare-before-corruption"),
+  );
+  assert.equal(prepared.ok, true);
+
+  const readyName = (await harness.caches.keys()).find((name) => name.includes(":ready:"));
+  assert.ok(readyName);
+  const ready = await harness.caches.open(readyName);
+  await ready.put("/data/waterloo-map.json", new Response("truncated", { status: 200 }));
+
+  const verified = await dispatchWorkerMessage(
+    harness,
+    createOfflineWorkerVerificationRequest(
+      "waterloo",
+      paths,
+      manifest.manifestId,
+      "verify-after-corruption",
+    ),
+  );
+  assert.equal(verified.ok, false);
+  assert.equal(verified.code, "verification-failed");
+  assert.equal((await harness.caches.keys()).includes(readyName), false);
 });
 
 test("service-worker removal deletes only the selected area's ready and staging caches", async () => {
@@ -344,7 +534,9 @@ test("the preparation component makes readiness and online-only limits explicit"
   assert.match(source, /Apply offline support update/);
   assert.match(source, /Remove \$\{areaName\} offline pilot pack/);
   assert.match(source, /worker confirms[\s\S]*removeVerifiedOfflinePilot/);
-  assert.match(source, /createOfflineWorkerRequest\("VERIFY_PILOT_PACK"/);
+  assert.match(source, /buildOfflinePilotIntegrityManifest/);
+  assert.match(source, /createOfflineWorkerVerificationRequest/);
+  assert.match(source, /integrity-checked/);
   assert.match(source, /writeVerifiedOfflinePilot/);
   assert.match(source, /scoring-worker\.ts\?worker&url/);
   assert.match(source, /shadow-worker\.ts\?worker&url/);

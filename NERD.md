@@ -44,6 +44,8 @@ synchronous calculation cannot yet be interrupted.
 - Warm-up: five runs.
 - Measurement: 25 runs.
 - Correctness control: full-pixel FNV-1a hash and shadow percentage.
+- Comparison: pre-optimisation reference path and production fast path run in
+  the same process.
 
 Run the benchmark with:
 
@@ -64,7 +66,13 @@ npm run benchmark:engine
 | Nine times × three routes × eight journeys | 54.988 ms median; 61.009 ms p95 |
 | Five-plane worker copy | 5,013,750 bytes; 0.282 ms median |
 
-These are local engine measurements, not low-end-phone or hosted latency claims.
+The original development comparison above is retained as historical evidence.
+The committed reference switch now makes the comparison directly reproducible.
+On the final-tree rerun it measured 89.327 ms reference versus 83.920 ms
+production median (6.1%), with the same `46d567aa` output hash. The recorded
+run is in `docs/audit/engine-benchmark-20260812.json`. Timings vary with CPU
+load, so the paired run and unchanged output are the relevant controls. These
+are local engine measurements, not low-end-phone or hosted latency claims.
 
 ## Implemented quick win
 
@@ -82,7 +90,8 @@ full pilot hash and coverage are also unchanged.
 
 ### Quick wins
 
-1. **Completed — skip already-painted target work.** Measured 10.8% median gain.
+1. **Completed — skip already-painted target work.** Measured 10.8% in the
+   original run and 6.1% in the committed final-tree comparison.
 2. Split absolute and legacy elevation loops so current pilot frames do not
    repeatedly branch on model format.
 3. Preclassify unmodelled direction ranges in prepared route geometry rather

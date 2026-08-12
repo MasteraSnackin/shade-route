@@ -96,7 +96,13 @@ test("overlapping casts are the exact union of their individual masks", () => {
   const first = renderGroundShadowFrame(firstGrid, SUMMER_NOON, LONDON);
   const second = renderGroundShadowFrame(secondGrid, SUMMER_NOON, LONDON);
   const combined = renderGroundShadowFrame(combinedGrid, SUMMER_NOON, LONDON);
+  const reference = renderGroundShadowFrame(combinedGrid, SUMMER_NOON, LONDON, {
+    skipPaintedTargetFastPath: false,
+  });
   let unionCellCount = 0;
+
+  assert.deepEqual(combined.pixels, reference.pixels);
+  assert.equal(combined.shadowPercent, reference.shadowPercent);
 
   for (let index = 3; index < combined.pixels.length; index += 4) {
     const expectedAlpha = Math.max(first.pixels[index], second.pixels[index]);

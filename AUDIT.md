@@ -2,8 +2,9 @@
 
 Audit date: 12 August 2026
 Application: ShadeRoute London pilot
-Viewports: 1440 × 1000 and 390 × 844
-Healing attempts used: 1 of 3
+Configured browser viewports: 1440 × 1000 and 390 × 844
+Captured PNG surfaces: 1251 × 1000 and 390 × 844
+Healing attempts used: 2 of 3
 
 ## Squad status
 
@@ -76,6 +77,22 @@ Initial scores were Visual 8.4, Functional 8.7 and Trust 9.1.
 - Added hostile-body, stream, timeout and cancellation regression tests.
 - Removed redundant ground-shadow hot-loop work with pixel-identical output.
 
+## Independent traceability pass
+
+A second pass tested documented boundary claims rather than assuming the first
+green suite proved them. It found four reproducible gaps:
+
+1. Server route and heat deadlines only aborted a signal; hostile upstream work
+   that ignored abort could still remain pending.
+2. Arbitrary map-point selection had no keyboard confirmation path.
+3. Local place-data failure was silently presented as an ordinary empty search.
+4. Offline readiness checked response presence and status, not exact bytes.
+
+The fixes add explicit header/body deadline races, a keyboard map-centre action,
+a recoverable local-place error state and SHA-256/byte-length verification for
+staged, promoted and later-read offline caches. Focused browser checks confirmed
+the mobile map-centre flow without horizontal overflow.
+
 ## Final validation
 
 ### Information architecture
@@ -110,12 +127,18 @@ evidence moved beside or after the route decision.
 
 **Pass.** Route choices update `aria-pressed` immediately. Time-step controls
 update the displayed London time and model. Long operations expose busy labels.
+The browser automation round trip is not a valid event-to-paint timer, so this
+audit does not invent a universal sub-100 ms figure. The durable contract is
+same-render feedback for reversible controls and an immediate busy state for
+asynchronous work; real-device interaction latency remains a device test.
 
 ### System states
 
 - **Loading:** text and skeleton present.
 - **Empty:** saved journeys and partial context have explicit empty copy.
 - **Error:** neutral UKHSA failure and typed route failures offer recovery.
+- **Partial local data:** pilot landmarks remain usable and local-place failure
+  exposes a retry rather than masquerading as no results.
 - **Success:** offline preparation confirmed 15 verified files, then removal
   returned the pilot to an unverified state.
 
@@ -137,6 +160,8 @@ Lightweight landmark choices use an inline combobox/listbox rather than a modal.
 - No visible audited button, non-checkbox input, select or textarea below 44 px.
 - Heading order begins `h1`, then section `h2` elements.
 - Skip-link activation focuses `#route-planner`.
+- Keyboard map-point selection exposes a visible centre marker, instructions and
+  a 44 px confirmation action using the same bounds-validation path.
 - No browser console errors or warnings in the final flow.
 
 ## Remaining non-blocking gates
@@ -158,12 +183,17 @@ quality threshold.
 - `docs/audit/before-mobile-390.png`
 - `docs/audit/after-desktop.png`
 - `docs/audit/after-mobile-390.png`
+- `docs/audit/map-centre-keyboard.png`
+- `docs/audit/shade-time-movement.mp4`
+- `docs/audit/engine-benchmark-20260812.json`
 - `DEBUG.md`
 - `NERD.md`
 - `ERROR-HANDLING.md`
 
 ## Final sync
 
-The production build, lint, TypeScript checks and all 167 deterministic tests
-passed. `PLAN.md` is marked **Verified & Polished**; the evidence is ready for
-the required audit commit.
+The first production build, lint, TypeScript checks and all 167 deterministic
+tests passed in commit `a5ab801`, which uses the required `[AUTO-HEALED]`
+prefix. After the independent corrections, the production build, lint, strict
+TypeScript check and all 177 deterministic tests passed again. The follow-up
+commit retains the required prefix.

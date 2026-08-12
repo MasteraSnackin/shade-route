@@ -949,6 +949,16 @@ export function RouteMap({
   const sunStatus = currentSunPosition
     ? `Sun ${sunDirection(currentSunPosition.azimuthDeg)} (${formatAngle(currentSunPosition.azimuthDeg)}) · altitude ${formatAngle(currentSunPosition.altitudeDeg)}${currentSunPosition.isDaylight ? "" : " · below horizon"}`
     : "Calculating sun position";
+  const pickingLabel = picking === "origin" ? "start" : "destination";
+
+  const chooseMapCentre = () => {
+    if (!picking) return;
+    const centre = mapRef.current?.getCenter();
+    if (!centre) return;
+    // ShadeRouteApp remains the single bounds-validation boundary for pointer,
+    // geolocation and keyboard-selected coordinates.
+    pickCallbackRef.current([centre.lng, centre.lat]);
+  };
 
   return (
     <div className="map-wrap">
@@ -956,12 +966,21 @@ export function RouteMap({
         ref={containerRef}
         className="route-map"
         role="region"
-        aria-label={`3D shadow map of ${area.name} for ${timeLabel}. ${picking ? `Choose the ${picking === "origin" ? "start" : "destination"} point.` : "Routes are also listed below the map."}`}
+        aria-label={`3D shadow map of ${area.name} for ${timeLabel}. ${picking ? `Choose the ${pickingLabel} point. Click or tap a point, or use the arrow keys to position the map centre and then use the map-centre button.` : "Routes are also listed below the map."}`}
       />
-      <div className="map-status" aria-live={picking ? "polite" : "off"}>
-        {picking
-          ? `Tap within the outlined area to set ${picking === "origin" ? "the start" : "the destination"}.`
-          : `3D building shadows · ${timeLabel} · ${sunStatus}`}
+      {picking ? <span className="map-pick-centre" aria-hidden="true" /> : null}
+      <div className={`map-status${picking ? " is-picking" : ""}`} aria-live={picking ? "polite" : "off"}>
+        {picking ? (
+          <>
+            <span>
+              Click or tap within the outlined area. With a keyboard, focus the map, use its arrow keys
+              to place the centre marker, then choose the button below.
+            </span>
+            <button type="button" onClick={chooseMapCentre}>
+              Use map centre for {pickingLabel}
+            </button>
+          </>
+        ) : `3D building shadows · ${timeLabel} · ${sunStatus}`}
       </div>
     </div>
   );

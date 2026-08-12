@@ -4,8 +4,9 @@ import {
   UKHSA_HEAT_METRIC_URL,
   unavailableHeatContext,
   type HeatContextAvailable,
-} from "../../../lib/heat-context";
+} from "../../../lib/heat-context.ts";
 import { readBoundedJson } from "../../../lib/bounded-json.ts";
+import { raceWithAbort } from "../../../lib/abort-race.ts";
 
 const UPSTREAM_TIMEOUT_MS = 4_000;
 const MAX_UPSTREAM_RESPONSE_BYTES = 256_000;
@@ -30,21 +31,40 @@ interface CachedContext {
 let cachedContext: CachedContext | undefined;
 let refreshInFlight: Promise<HeatContextAvailable> | undefined;
 
-async function fetchHeatContext() {
+interface HeatContextFetchOptions {
+  fetchImplementation?: typeof fetch;
+  timeoutMs?: number;
+}
+
+export async function fetchHeatContext(options: HeatContextFetchOptions = {}) {
+  const fetchImplementation = options.fetchImplementation ?? fetch;
+  const timeoutMs = options.timeoutMs ?? UPSTREAM_TIMEOUT_MS;
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new RangeError("timeoutMs must be a positive finite number.");
+  }
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
+  const timeoutId = setTimeout(
+    () => controller.abort(new DOMException("The UKHSA request timed out.", "TimeoutError")),
+    timeoutMs,
+  );
 
   try {
-    const response = await fetch(UKHSA_HEAT_METRIC_URL, {
-      cache: "no-store",
-      headers: { Accept: "application/json" },
-      signal: controller.signal,
-    });
+    const response = await raceWithAbort(
+      fetchImplementation(UKHSA_HEAT_METRIC_URL, {
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+        signal: controller.signal,
+      }),
+      controller.signal,
+    );
 
     if (!response.ok) throw new Error("UKHSA heat-health request failed");
 
     const parsed = parseUkhsaHeatContext(
-      await readBoundedJson(response, MAX_UPSTREAM_RESPONSE_BYTES),
+      await raceWithAbort(
+        readBoundedJson(response, MAX_UPSTREAM_RESPONSE_BYTES),
+        controller.signal,
+      ),
     );
     if (!parsed) throw new Error("UKHSA heat-health response was invalid");
     return parsed;

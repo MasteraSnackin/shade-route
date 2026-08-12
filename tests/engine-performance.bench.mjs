@@ -12,8 +12,8 @@ import { renderGroundShadowFrame } from "../lib/shadow-raster.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const areaId = process.env.BENCH_AREA ?? "kings-cross";
-const iterations = Math.max(1, Number.parseInt(process.env.BENCH_ITERATIONS ?? "5", 10));
-const warmups = Math.max(0, Number.parseInt(process.env.BENCH_WARMUPS ?? "1", 10));
+const iterations = Math.max(1, Number.parseInt(process.env.BENCH_ITERATIONS ?? "25", 10));
+const warmups = Math.max(0, Number.parseInt(process.env.BENCH_WARMUPS ?? "5", 10));
 
 function readArrayBuffer(file) {
   const buffer = fs.readFileSync(file);
@@ -92,11 +92,19 @@ const scoringStart = new Date("2026-06-21T07:00:00.000Z");
 const scheduledJourneys = 8;
 const repeatEveryMinutes = 15;
 
-const results = [
-  measure("full-ground-shadow-frame", () => {
+const referenceShadow = measure("reference-ground-shadow-frame", () => {
+  const frame = renderGroundShadowFrame(grid, shadowDate, centre, {
+    skipPaintedTargetFastPath: false,
+  });
+  return frame.shadowPercent + frame.pixels.byteLength;
+});
+const optimisedShadow = measure("optimised-ground-shadow-frame", () => {
     const frame = renderGroundShadowFrame(grid, shadowDate, centre);
     return frame.shadowPercent + frame.pixels.byteLength;
-  }),
+});
+const results = [
+  referenceShadow,
+  optimisedShadow,
   measure("nine-time-three-route-eight-journey-score-sweep", () => {
     let checksum = 0;
     for (let slot = 0; slot < 9; slot += 1) {
@@ -137,6 +145,13 @@ console.log(
       shadowVerification: {
         shadowPercent: verificationFrame.shadowPercent,
         pixelHash: fnv1a(verificationFrame.pixels),
+      },
+      optimisation: {
+        medianReductionPercent: Number(
+          (((referenceShadow.medianMs - optimisedShadow.medianMs) /
+            referenceShadow.medianMs) *
+            100).toFixed(1),
+        ),
       },
       results,
     },

@@ -40,7 +40,7 @@ contract for the browser, Web Workers and Worker API.
 | Incomplete grid/model | Expected model error | After data change | Show unavailable/limited state |
 | Local storage unavailable | Actionable `Error` message | Environment-dependent | Explain nothing changed |
 | Unknown local schema | Parse failure without overwrite | No automatic retry | Ask user to export/clear deliberately |
-| Offline-pack verification failure | Worker result with message | Yes | Retain previous verified pack |
+| Offline-pack verification failure | Worker result with message | Yes | Retain a previous pack during failed replacement; remove a corrupt active pack |
 
 ## API error contract
 
@@ -108,8 +108,10 @@ the bundled pilot as a recovery route.
 
 The server runs each configured Valhalla endpoint with an independent 3.5-second
 attempt inside an eight-second total deadline. A hanging or malformed primary
-does not consume the fallback's entire budget. The server accepts only HTTPS
-endpoints, except loopback HTTP in local development.
+does not consume the fallback's entire budget. Header fetches and bounded body
+reads are explicitly raced against the attempt signal, so the deadline still
+settles if an upstream implementation ignores abort. The server accepts only
+HTTPS endpoints, except loopback HTTP in local development.
 
 A stateful cross-request circuit breaker is deliberately not used in this
 prototype: it would be process-local, inconsistent across Worker isolates and
@@ -129,6 +131,17 @@ Scoring and shadow clients initialise grids by version, send generation-tagged
 requests and ignore responses from replaced work. Worker construction, runtime
 or message failures cause pending requests to reject. A deterministic synchronous
 calculation path keeps the pilot usable where Worker support is unavailable.
+
+### Offline pilot packs
+
+Offline protocol v2 binds the selected data and generated application files to
+an exact byte-length and SHA-256 manifest. The service worker validates each
+download before staging, revalidates the complete staging and final caches, and
+stores the canonical manifest beside the ready pack. Later readiness checks
+re-hash the saved responses. A failed replacement never removes the preceding
+ready pack; corruption found in a currently ready pack removes that cache and
+clears the browser's readiness record. Online route and heat APIs are never
+included in or served from these caches.
 
 ## Validation layers
 
@@ -196,7 +209,8 @@ Deterministic tests cover:
 - Invalid endpoints, route bounds, summaries, manoeuvres and coordinate counts.
 - Stale result suppression in routing and scoring clients.
 - Heat parsing, cache response contracts and bounded provider payloads.
-- Offline staging, atomic promotion, removal isolation and failure retention.
+- Offline byte/hash verification, atomic promotion, corruption removal,
+  selected-area isolation and previous-pack retention.
 - Strict evidence and local-storage schemas.
 
 Unexpected defects should receive a minimal regression test at the narrowest

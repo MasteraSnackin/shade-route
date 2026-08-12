@@ -227,7 +227,7 @@ test("live routes reject zero or rounded-to-zero distance and duration summaries
   }
 });
 
-test("a timed-out primary leaves time for an independent routing fallback", async () => {
+test("a timed-out primary leaves time for an independent routing fallback", { timeout: 1_000 }, async () => {
   const geometryDistance = BASE.slice(1).reduce(
     (sum, coordinate, index) => sum + haversineMetres(BASE[index], coordinate),
     0,
@@ -236,14 +236,8 @@ test("a timed-out primary leaves time for an independent routing fallback", asyn
   const fetchImplementation = (url, init) => {
     calls.push(url);
     if (url.includes("primary")) {
-      return new Promise((resolve, reject) => {
-        void resolve;
-        const rejectForAbort = () => reject(
-          init.signal.reason ?? new DOMException("The operation was aborted.", "AbortError"),
-        );
-        if (init.signal.aborted) rejectForAbort();
-        else init.signal.addEventListener("abort", rejectForAbort, { once: true });
-      });
+      void init;
+      return new Promise(() => undefined);
     }
     return Promise.resolve(Response.json({
       trip: trip(BASE, {
@@ -270,18 +264,49 @@ test("a timed-out primary leaves time for an independent routing fallback", asyn
   assert.deepEqual(routes?.[0].coordinates, BASE);
 });
 
-test("client cancellation aborts the active route request without trying fallback", async () => {
+test("a primary stalled while reading its body cannot consume the fallback budget", { timeout: 1_000 }, async () => {
+  const geometryDistance = BASE.slice(1).reduce(
+    (sum, coordinate, index) => sum + haversineMetres(BASE[index], coordinate),
+    0,
+  );
+  const calls = [];
+  const fetchImplementation = (url) => {
+    calls.push(url);
+    if (url.includes("primary")) {
+      return Promise.resolve(new Response(new ReadableStream({ start() {} }), {
+        headers: { "Content-Type": "application/json" },
+      }));
+    }
+    return Promise.resolve(Response.json({
+      trip: trip(BASE, {
+        summary: { length: geometryDistance / 1000, time: 900 },
+      }),
+    }));
+  };
+
+  const routes = await fetchWalkingRoutesWithFallback(
+    { lon: START[0], lat: START[1] },
+    { lon: END[0], lat: END[1] },
+    { id: "waterloo", bbox: [-0.13, 51.49, -0.1, 51.51] },
+    new AbortController().signal,
+    {
+      endpoints: ["https://primary.test/route", "https://fallback.test/route"],
+      totalTimeoutMs: 200,
+      perEndpointTimeoutMs: 20,
+      fetchImplementation,
+    },
+  );
+
+  assert.deepEqual(calls, ["https://primary.test/route", "https://fallback.test/route"]);
+  assert.equal(routes?.length, 1);
+});
+
+test("client cancellation aborts the active route request without trying fallback", { timeout: 1_000 }, async () => {
   const calls = [];
   const fetchImplementation = (url, init) => {
     calls.push(url);
-    return new Promise((resolve, reject) => {
-      void resolve;
-      const rejectForAbort = () => reject(
-        init.signal.reason ?? new DOMException("The operation was aborted.", "AbortError"),
-      );
-      if (init.signal.aborted) rejectForAbort();
-      else init.signal.addEventListener("abort", rejectForAbort, { once: true });
-    });
+    void init;
+    return new Promise(() => undefined);
   };
   const clientController = new AbortController();
   const pending = fetchWalkingRoutesWithFallback(
@@ -349,6 +374,7 @@ test("custom route handler declares private responses and bounded fallback deadl
   assert.match(source, /const totalController = new AbortController\(\)/);
   assert.match(source, /const attemptController = new AbortController\(\)/);
   assert.match(source, /signal:\s*attemptController\.signal/);
+  assert.match(source, /raceWithAbort/);
   assert.match(source, /private, no-store/);
   assert.doesNotMatch(source, /Cache-Control[\s\S]{0,80}public/);
   assert.match(source, /Both points must be inside the same ShadeRoute pilot area/);

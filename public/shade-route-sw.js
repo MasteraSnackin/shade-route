@@ -1,13 +1,16 @@
 /* ShadeRoute offline pilot service worker.
  * Pilot packs are prepared only after an explicit client message. */
 
-const PROTOCOL_VERSION = 1;
-const WORKER_VERSION = "shade-route-offline-2026-08-12-v1";
-const SUPPORTED_PACK_VERSION = "pilot-data-2026-08-12-v1";
+const PROTOCOL_VERSION = 2;
+const WORKER_VERSION = "shade-route-offline-2026-08-12-v2";
+const SUPPORTED_PACK_VERSION = "pilot-data-2026-08-12-v2";
 const CACHE_PREFIX = "shaderoute-offline-pilot";
 const STAGING_MARKER = ":staging:";
 const READY_MARKER = ":ready:";
 const MAXIMUM_ASSETS = 80;
+const MAXIMUM_ASSET_BYTES = 25_000_000;
+const MAXIMUM_PACK_BYTES = 64_000_000;
+const MANIFEST_CACHE_PATH = "/.shaderoute/offline-integrity-manifest.json";
 
 function safePart(value) {
   return typeof value === "string" && /^[a-z0-9._-]{1,100}$/i.test(value);
@@ -25,25 +28,94 @@ function readyCachePrefix(areaId, packVersion) {
   return `${CACHE_PREFIX}:${areaId}${READY_MARKER}${packVersion}:`;
 }
 
+function normaliseAssetPath(value) {
+  if (typeof value !== "string") return null;
+  let url;
+  try {
+    url = new URL(value, self.location.origin);
+  } catch {
+    return null;
+  }
+  if (
+    url.origin !== self.location.origin ||
+    url.pathname.startsWith("/api/") ||
+    url.pathname.startsWith("/.shaderoute/") ||
+    url.pathname === "/shade-route-sw.js"
+  ) return null;
+  return `${url.pathname}${url.search}`;
+}
+
 function validAssetPaths(assets) {
   if (!Array.isArray(assets) || assets.length < 1 || assets.length > MAXIMUM_ASSETS) return null;
   const paths = [];
   for (const value of assets) {
-    if (typeof value !== "string") return null;
-    let url;
-    try {
-      url = new URL(value, self.location.origin);
-    } catch {
-      return null;
-    }
-    if (
-      url.origin !== self.location.origin ||
-      url.pathname.startsWith("/api/") ||
-      url.pathname === "/shade-route-sw.js"
-    ) return null;
-    paths.push(`${url.pathname}${url.search}`);
+    const path = normaliseAssetPath(value);
+    if (!path) return null;
+    paths.push(path);
   }
-  return [...new Set(paths)].sort();
+  if (new Set(paths).size !== paths.length) return null;
+  return paths.sort();
+}
+
+function validIntegrityId(value) {
+  return typeof value === "string" && /^sha256-[0-9a-f]{64}$/.test(value);
+}
+
+function bytesToHex(bytes) {
+  return Array.from(new Uint8Array(bytes), (value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+async function sha256Hex(bytes) {
+  return bytesToHex(await crypto.subtle.digest("SHA-256", bytes));
+}
+
+function canonicalIntegrityManifest(areaId, packVersion, assets) {
+  return JSON.stringify([
+    areaId,
+    packVersion,
+    assets.map(({ path, byteLength, sha256 }) => [path, byteLength, sha256]),
+  ]);
+}
+
+async function validateIntegrityManifest(value, areaId, packVersion) {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    value.areaId !== areaId ||
+    value.packVersion !== packVersion ||
+    !validIntegrityId(value.manifestId) ||
+    !Array.isArray(value.assets) ||
+    value.assets.length < 1 ||
+    value.assets.length > MAXIMUM_ASSETS
+  ) return null;
+
+  let totalBytes = 0;
+  const assets = [];
+  for (const candidate of value.assets) {
+    if (!candidate || typeof candidate !== "object") return null;
+    const path = normaliseAssetPath(candidate.path);
+    if (
+      !path ||
+      path !== candidate.path ||
+      !Number.isSafeInteger(candidate.byteLength) ||
+      candidate.byteLength < 1 ||
+      candidate.byteLength > MAXIMUM_ASSET_BYTES ||
+      typeof candidate.sha256 !== "string" ||
+      !/^[0-9a-f]{64}$/.test(candidate.sha256)
+    ) return null;
+    totalBytes += candidate.byteLength;
+    if (totalBytes > MAXIMUM_PACK_BYTES) return null;
+    assets.push({ path, byteLength: candidate.byteLength, sha256: candidate.sha256 });
+  }
+  assets.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
+  if (new Set(assets.map(({ path }) => path)).size !== assets.length) return null;
+
+  const canonical = new TextEncoder().encode(
+    canonicalIntegrityManifest(areaId, packVersion, assets),
+  );
+  const manifestId = `sha256-${await sha256Hex(canonical)}`;
+  if (manifestId !== value.manifestId) return null;
+  return { areaId, packVersion, manifestId, assets };
 }
 
 function validRequest(message) {
@@ -61,27 +133,25 @@ function validRequest(message) {
   );
 }
 
-async function cacheContainsEveryAsset(cache, assets) {
-  for (const asset of assets) {
-    const response = await cache.match(asset, { ignoreSearch: false });
-    if (!response || !response.ok) return false;
+async function responseMatchesAsset(response, asset) {
+  if (!response || !response.ok || response.type === "opaque") return false;
+  try {
+    const bytes = await response.clone().arrayBuffer();
+    return bytes.byteLength === asset.byteLength && await sha256Hex(bytes) === asset.sha256;
+  } catch {
+    return false;
+  }
+}
+
+async function cacheContainsEveryAsset(cache, manifest) {
+  for (const asset of manifest.assets) {
+    const response = await cache.match(asset.path, { ignoreSearch: false });
+    if (!(await responseMatchesAsset(response, asset))) return false;
   }
   return true;
 }
 
 async function preparePilotPack(message, port) {
-  const assets = validAssetPaths(message.assets);
-  if (!assets) {
-    reply(port, {
-      ok: false,
-      type: "PACK_FAILED",
-      requestId: message.requestId,
-      areaId: message.areaId,
-      code: "invalid-request",
-      message: "The offline asset list is incomplete.",
-    });
-    return;
-  }
   if (message.packVersion !== SUPPORTED_PACK_VERSION) {
     reply(port, {
       ok: false,
@@ -93,6 +163,35 @@ async function preparePilotPack(message, port) {
     });
     return;
   }
+  let manifest = null;
+  try {
+    manifest = await validateIntegrityManifest(
+      message.manifest,
+      message.areaId,
+      message.packVersion,
+    );
+  } catch {
+    reply(port, {
+      ok: false,
+      type: "PACK_FAILED",
+      requestId: message.requestId,
+      areaId: message.areaId,
+      code: "verification-failed",
+      message: "This browser could not verify the offline integrity manifest.",
+    });
+    return;
+  }
+  if (!manifest) {
+    reply(port, {
+      ok: false,
+      type: "PACK_FAILED",
+      requestId: message.requestId,
+      areaId: message.areaId,
+      code: "invalid-request",
+      message: "The offline integrity manifest is incomplete or invalid.",
+    });
+    return;
+  }
 
   const generation = `${Date.now()}-${message.requestId}`;
   const stagingName = `${CACHE_PREFIX}:${message.areaId}${STAGING_MARKER}${message.packVersion}:${generation}`;
@@ -101,8 +200,8 @@ async function preparePilotPack(message, port) {
 
   try {
     const staging = await caches.open(stagingName);
-    for (const asset of assets) {
-      const request = new Request(asset, {
+    for (const asset of manifest.assets) {
+      const request = new Request(asset.path, {
         cache: "reload",
         credentials: "same-origin",
       });
@@ -110,20 +209,32 @@ async function preparePilotPack(message, port) {
       if (!response.ok || response.type === "opaque") {
         throw new Error("download-failed");
       }
-      await staging.put(asset, response.clone());
+      if (!(await responseMatchesAsset(response, asset))) {
+        throw new Error("verification-failed");
+      }
+      await staging.put(asset.path, response.clone());
     }
-    if (!(await cacheContainsEveryAsset(staging, assets))) {
+    if (!(await cacheContainsEveryAsset(staging, manifest))) {
       throw new Error("verification-failed");
     }
+    await staging.put(
+      MANIFEST_CACHE_PATH,
+      new Response(JSON.stringify(manifest), {
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+      }),
+    );
 
     const finalCache = await caches.open(finalName);
     finalCreated = true;
-    for (const asset of assets) {
-      const response = await staging.match(asset, { ignoreSearch: false });
+    for (const asset of manifest.assets) {
+      const response = await staging.match(asset.path, { ignoreSearch: false });
       if (!response) throw new Error("verification-failed");
-      await finalCache.put(asset, response);
+      await finalCache.put(asset.path, response);
     }
-    if (!(await cacheContainsEveryAsset(finalCache, assets))) {
+    const storedManifest = await staging.match(MANIFEST_CACHE_PATH, { ignoreSearch: false });
+    if (!storedManifest) throw new Error("verification-failed");
+    await finalCache.put(MANIFEST_CACHE_PATH, storedManifest);
+    if (!(await cacheContainsEveryAsset(finalCache, manifest))) {
       throw new Error("verification-failed");
     }
 
@@ -143,7 +254,8 @@ async function preparePilotPack(message, port) {
       areaId: message.areaId,
       packVersion: message.packVersion,
       workerVersion: WORKER_VERSION,
-      assetCount: assets.length,
+      assetCount: manifest.assets.length,
+      integrityManifestId: manifest.manifestId,
     });
   } catch (error) {
     await caches.delete(stagingName);
@@ -164,7 +276,11 @@ async function preparePilotPack(message, port) {
 
 async function verifyPilotPack(message, port) {
   const assets = validAssetPaths(message.assets);
-  if (!assets || message.packVersion !== SUPPORTED_PACK_VERSION) {
+  if (
+    !assets ||
+    message.packVersion !== SUPPORTED_PACK_VERSION ||
+    !validIntegrityId(message.integrityManifestId)
+  ) {
     reply(port, {
       ok: false,
       type: "PACK_MISSING",
@@ -178,9 +294,39 @@ async function verifyPilotPack(message, port) {
   const names = (await caches.keys())
     .filter((name) => name.startsWith(readyCachePrefix(message.areaId, message.packVersion)))
     .reverse();
+  let integrityFailure = false;
   for (const name of names) {
     const cache = await caches.open(name);
-    if (await cacheContainsEveryAsset(cache, assets)) {
+    let manifest = null;
+    try {
+      const stored = await cache.match(MANIFEST_CACHE_PATH, { ignoreSearch: false });
+      if (stored?.ok) {
+        manifest = await validateIntegrityManifest(
+          await stored.json(),
+          message.areaId,
+          message.packVersion,
+        );
+      }
+    } catch {
+      manifest = null;
+    }
+    if (!manifest) {
+      integrityFailure = true;
+      await caches.delete(name);
+      continue;
+    }
+    const manifestPaths = manifest.assets.map(({ path }) => path);
+    if (
+      manifest.manifestId !== message.integrityManifestId ||
+      manifestPaths.length !== assets.length ||
+      manifestPaths.some((path, index) => path !== assets[index])
+    ) {
+      integrityFailure = true;
+      await caches.delete(name);
+      continue;
+    }
+
+    if (await cacheContainsEveryAsset(cache, manifest)) {
       reply(port, {
         ok: true,
         type: "PACK_VERIFIED",
@@ -188,18 +334,23 @@ async function verifyPilotPack(message, port) {
         areaId: message.areaId,
         packVersion: message.packVersion,
         workerVersion: WORKER_VERSION,
-        assetCount: assets.length,
+        assetCount: manifest.assets.length,
+        integrityManifestId: manifest.manifestId,
       });
       return;
     }
+    integrityFailure = true;
+    await caches.delete(name);
   }
   reply(port, {
     ok: false,
-    type: "PACK_MISSING",
+    type: integrityFailure ? "PACK_FAILED" : "PACK_MISSING",
     requestId: message.requestId,
     areaId: message.areaId,
-    code: "pack-missing",
-    message: "This pilot is not prepared for offline use on this device.",
+    code: integrityFailure ? "verification-failed" : "pack-missing",
+    message: integrityFailure
+      ? "The saved pilot pack failed its integrity check and was removed. Prepare it again before relying on offline access."
+      : "This pilot is not prepared for offline use on this device.",
   });
 }
 
@@ -291,7 +442,11 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   // Custom routing and live heat context remain online-only and are never
   // answered from an offline pilot pack.
-  if (url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
+  if (
+    url.origin !== self.location.origin ||
+    url.pathname.startsWith("/api/") ||
+    url.pathname.startsWith("/.shaderoute/")
+  ) return;
 
   event.respondWith((async () => {
     try {

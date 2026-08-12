@@ -4,6 +4,7 @@ import {
   type WalkingRoute,
 } from "../../../lib/routes.ts";
 import { BoundedJsonError, readBoundedJson } from "../../../lib/bounded-json.ts";
+import { raceWithAbort } from "../../../lib/abort-race.ts";
 import type { RouteApiErrorCode } from "../../../lib/route-api-contract.ts";
 
 const AREAS: Array<Pick<PilotArea, "id" | "bbox">> = [
@@ -124,25 +125,31 @@ export async function fetchWalkingRoutesWithFallback(
       );
 
       try {
-        const response = await fetchImplementation(upstream, {
-          method: "POST",
-          cache: "no-store",
-          signal: attemptController.signal,
-          headers: {
-            "Content-Type": "application/json",
-            "X-Client-Id": "shaderoute-hackathon",
-          },
-          body: JSON.stringify({
-            locations: [origin, destination],
-            costing: "pedestrian",
-            alternates: 2,
-            units: "kilometers",
-            language: "en-GB",
+        const response = await raceWithAbort(
+          fetchImplementation(upstream, {
+            method: "POST",
+            cache: "no-store",
+            signal: attemptController.signal,
+            headers: {
+              "Content-Type": "application/json",
+              "X-Client-Id": "shaderoute-hackathon",
+            },
+            body: JSON.stringify({
+              locations: [origin, destination],
+              costing: "pedestrian",
+              alternates: 2,
+              units: "kilometers",
+              language: "en-GB",
+            }),
           }),
-        });
+          attemptController.signal,
+        );
         if (!response.ok) continue;
         return compactValhallaResponse(
-          await readBoundedJson(response, MAX_UPSTREAM_RESPONSE_BYTES),
+          await raceWithAbort(
+            readBoundedJson(response, MAX_UPSTREAM_RESPONSE_BYTES),
+            attemptController.signal,
+          ),
           area.id,
           { origin, destination, bbox: area.bbox },
         );
