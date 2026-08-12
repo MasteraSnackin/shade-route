@@ -1,0 +1,10 @@
+{
+  "locations": [
+    { "lat": 51.50225, "lon": -0.11316, "type": "break" },
+    { "lat": 51.49906, "lon": -0.11870, "type": "break" }
+  ],
+  "costing": "pedestrian",
+  "alternates": 2,
+  "units": "kilometers",
+  "language": "en-GB"
+}

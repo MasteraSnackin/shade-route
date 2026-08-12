@@ -1,0 +1,1 @@
+{"id":"waterloo","width":563,"height":530,"bboxBng":[529900,178580,532150,180700],"resolutionMetres":4,"heightStepMetres":0.5,"coveragePercent":100,"anyCoveragePercent":100,"validityFile":"waterloo-validity.bin","validityEncoding":"fraction-255","source":"Environment Agency LIDAR Composite 1m DSM minus DTM","sourceDate":"Composite surveys 2000–2022","processed":"2026-08-12"}

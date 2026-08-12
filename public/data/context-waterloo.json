@@ -1,0 +1,166 @@
+{
+  "schemaVersion": 1,
+  "areaId": "waterloo",
+  "bbox": [-0.13, 51.4915, -0.0975, 51.5095],
+  "source": {
+    "label": "OpenStreetMap contributors",
+    "url": "https://www.openstreetmap.org/copyright",
+    "licence": "ODbL",
+    "snapshotAt": "2026-08-12T11:32:28Z",
+    "method": "Curated from named OpenStreetMap nodes present in the project's Overpass snapshot and explicitly tagged as drinking water, toilets, benches or individual trees. The source query was not an exhaustive amenities or tree survey; unnamed objects and relevant ways may be absent. No field verification was performed."
+  },
+  "additionalSources": [{
+    "label": "Greater London Authority Cool Space Data 2025",
+    "url": "https://data.london.gov.uk/dataset/cool-space-data-2025-2z19p",
+    "licence": "London Datastore terms; no dataset-specific licence stated",
+    "snapshotAt": "2025-12-11T12:13:45Z",
+    "method": "GLA-listed point records from the local Cool Space Data 2025 extract, captured 11 December 2025 and clipped to the pilot bounding box. This historical extract is not the GLA's live Summer 2026 map and does not confirm current listing, opening, access or amenities."
+  }],
+  "completeness": {
+    "cool-space": {
+      "status": "partial",
+      "note": "GLA-listed sites from the local 2025 extract are included. This is not the Summer 2026 live map; listing, opening, access and amenities may have changed and were not field-checked by ShadeRoute."
+    },
+    "drinking-water": {
+      "status": "partial",
+      "note": "Only named point records tagged amenity=drinking_water in the existing OSM snapshot are included. Operational status is not live."
+    },
+    "toilet": {
+      "status": "partial",
+      "note": "Only named point records tagged amenity=toilets in the existing OSM snapshot are included. Access, fees and opening hours may change."
+    },
+    "rest": {
+      "status": "partial",
+      "note": "Only named bench point records in the existing OSM snapshot are included. Most ordinary benches are unnamed and therefore absent. Shade is not implied."
+    },
+    "tree": {
+      "status": "partial",
+      "note": "Only named individual-tree point records in the existing OSM snapshot are included. This is not a street-tree or canopy inventory and does not establish shade."
+    }
+  },
+  "features": [
+    {
+      "id": "gla-cool-space-36",
+      "category": "cool-space",
+      "subtype": "official-cool-space",
+      "name": "St John's Waterloo",
+      "coordinate": [-0.111839986, 51.504070014],
+      "sourceRef": { "dataset": "gla-cool-spaces-2025", "recordId": 36, "url": "https://data.london.gov.uk/dataset/cool-space-data-2025-2z19p" },
+      "details": { "coolSpaceRegisterYear": 2025, "coolSpaceTier": 2, "fee": "no", "wheelchair": "yes", "indoor": "yes", "openingHours": "Monday and Tuesday 09:00–17:00", "notes": ["Seating, drinking water and toilets recorded in the 2025 register"] }
+    },
+    {
+      "id": "gla-cool-space-206",
+      "category": "cool-space",
+      "subtype": "official-cool-space",
+      "name": "The Abbey Centre",
+      "coordinate": [-0.1296462627, 51.497511438],
+      "sourceRef": { "dataset": "gla-cool-spaces-2025", "recordId": 206, "url": "https://data.london.gov.uk/dataset/cool-space-data-2025-2z19p" },
+      "details": { "coolSpaceRegisterYear": 2025, "coolSpaceTier": 2, "fee": "no", "wheelchair": "yes", "indoor": "yes", "openingHours": "Monday to Friday 09:00–16:00" }
+    },
+    {
+      "id": "gla-cool-space-67",
+      "category": "cool-space",
+      "subtype": "official-cool-space",
+      "name": "Southwark Heritage Centre and Walworth Library",
+      "coordinate": [-0.0980506534, 51.4925222155],
+      "sourceRef": { "dataset": "gla-cool-spaces-2025", "recordId": 67, "url": "https://data.london.gov.uk/dataset/cool-space-data-2025-2z19p" },
+      "details": { "coolSpaceRegisterYear": 2025, "coolSpaceTier": 1, "fee": "no", "wheelchair": "yes", "indoor": "yes", "openingHours": "Mon–Fri 10:00–20:00; Sat 10:00–17:00; Sun 12:00–16:00" }
+    },
+    {
+      "id": "gla-cool-space-85",
+      "category": "cool-space",
+      "subtype": "official-cool-space",
+      "name": "London LGBTQ+ Community Centre",
+      "coordinate": [-0.1009348572, 51.5081921058],
+      "sourceRef": { "dataset": "gla-cool-spaces-2025", "recordId": 85, "url": "https://data.london.gov.uk/dataset/cool-space-data-2025-2z19p" },
+      "details": { "coolSpaceRegisterYear": 2025, "coolSpaceTier": 2, "fee": "no", "wheelchair": "yes", "indoor": "yes", "openingHours": "Wed 09:30–18:00; Thu–Sun 11:00–20:00" }
+    },
+    {
+      "id": "gla-cool-space-284",
+      "category": "cool-space",
+      "subtype": "official-cool-space",
+      "name": "Imperial War Museum",
+      "coordinate": [-0.1083279814, 51.4960094607],
+      "sourceRef": { "dataset": "gla-cool-spaces-2025", "recordId": 284, "url": "https://data.london.gov.uk/dataset/cool-space-data-2025-2z19p" },
+      "details": { "coolSpaceRegisterYear": 2025, "coolSpaceTier": 1, "fee": "no", "wheelchair": "yes", "indoor": "yes", "openingHours": "Daily 10:00–18:00; last entry 17:30" }
+    },
+    {
+      "id": "osm-node-344521109",
+      "category": "toilet",
+      "subtype": "toilet",
+      "name": "Waterloo Station toilets",
+      "coordinate": [-0.1133529, 51.503634],
+      "sourceRef": { "osmType": "node", "osmId": 344521109, "url": "https://www.openstreetmap.org/node/344521109" },
+      "details": { "access": "yes", "fee": "no", "wheelchair": "yes", "openingHours": "24/7", "level": "1" }
+    },
+    {
+      "id": "osm-node-4274551602",
+      "category": "toilet",
+      "subtype": "toilet",
+      "name": "Waterloo Station toilets",
+      "coordinate": [-0.113509, 51.5036583],
+      "sourceRef": { "osmType": "node", "osmId": 4274551602, "url": "https://www.openstreetmap.org/node/4274551602" },
+      "details": { "access": "yes", "fee": "no", "openingHours": "24/7", "level": "1", "checkDate": "2022-07-10" }
+    },
+    {
+      "id": "osm-node-1968744125",
+      "category": "toilet",
+      "subtype": "toilet",
+      "name": "CityLoos",
+      "coordinate": [-0.1238053, 51.5013275],
+      "sourceRef": { "osmType": "node", "osmId": 1968744125, "url": "https://www.openstreetmap.org/node/1968744125" },
+      "details": { "fee": "yes", "notes": ["OSM describes below-street access by steps"] }
+    },
+    {
+      "id": "osm-node-1504407648",
+      "category": "drinking-water",
+      "subtype": "drinking-fountain",
+      "name": "Christ Church Southwark drinking fountain",
+      "coordinate": [-0.1055298, 51.5062121],
+      "sourceRef": { "osmType": "node", "osmId": 1504407648, "url": "https://www.openstreetmap.org/node/1504407648" }
+    },
+    {
+      "id": "osm-node-538090930",
+      "category": "rest",
+      "subtype": "bench",
+      "name": "Boat bench",
+      "coordinate": [-0.1215852, 51.4922539],
+      "sourceRef": { "osmType": "node", "osmId": 538090930, "url": "https://www.openstreetmap.org/node/538090930" },
+      "details": { "backrest": "yes" }
+    },
+    {
+      "id": "osm-node-538090931",
+      "category": "rest",
+      "subtype": "bench",
+      "name": "Boat bench",
+      "coordinate": [-0.1216173, 51.4921633],
+      "sourceRef": { "osmType": "node", "osmId": 538090931, "url": "https://www.openstreetmap.org/node/538090931" },
+      "details": { "backrest": "yes" }
+    },
+    {
+      "id": "osm-node-538090932",
+      "category": "rest",
+      "subtype": "bench",
+      "name": "Boat bench",
+      "coordinate": [-0.1216012, 51.49221],
+      "sourceRef": { "osmType": "node", "osmId": 538090932, "url": "https://www.openstreetmap.org/node/538090932" },
+      "details": { "backrest": "yes" }
+    },
+    {
+      "id": "osm-node-538090936",
+      "category": "tree",
+      "subtype": "individual-tree",
+      "name": "Millenium Tree",
+      "coordinate": [-0.12103, 51.4951401],
+      "sourceRef": { "osmType": "node", "osmId": 538090936, "url": "https://www.openstreetmap.org/node/538090936" }
+    },
+    {
+      "id": "osm-node-1735730565",
+      "category": "tree",
+      "subtype": "individual-tree",
+      "name": "Holocaust Memorial Tree",
+      "coordinate": [-0.1097765, 51.4961117],
+      "sourceRef": { "osmType": "node", "osmId": 1735730565, "url": "https://www.openstreetmap.org/node/1735730565" }
+    }
+  ]
+}

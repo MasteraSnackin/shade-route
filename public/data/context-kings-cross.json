@@ -1,0 +1,224 @@
+{
+  "schemaVersion": 1,
+  "areaId": "kings-cross",
+  "bbox": [-0.145, 51.517, -0.109, 51.5365],
+  "source": {
+    "label": "OpenStreetMap contributors",
+    "url": "https://www.openstreetmap.org/copyright",
+    "licence": "ODbL",
+    "snapshotAt": "2026-08-12T11:33:31Z",
+    "method": "Curated from named OpenStreetMap nodes present in the project's Overpass snapshot and explicitly tagged as drinking water, toilets, benches or individual trees. The source query was not an exhaustive amenities or tree survey; unnamed objects and relevant ways may be absent. No field verification was performed."
+  },
+  "additionalSources": [{
+    "label": "Greater London Authority Cool Space Data 2025",
+    "url": "https://data.london.gov.uk/dataset/cool-space-data-2025-2z19p",
+    "licence": "London Datastore terms; no dataset-specific licence stated",
+    "snapshotAt": "2025-12-11T12:13:45Z",
+    "method": "GLA-listed point records from the local Cool Space Data 2025 extract, captured 11 December 2025 and clipped to the pilot bounding box. This historical extract is not the GLA's live Summer 2026 map and does not confirm current listing, opening, access or amenities."
+  }],
+  "completeness": {
+    "cool-space": {
+      "status": "partial",
+      "note": "GLA-listed sites from the local 2025 extract are included. This is not the Summer 2026 live map; listing, opening, access and amenities may have changed and were not field-checked by ShadeRoute."
+    },
+    "drinking-water": {
+      "status": "partial",
+      "note": "Only named point records tagged amenity=drinking_water in the existing OSM snapshot are included. Operational status is not live."
+    },
+    "toilet": {
+      "status": "partial",
+      "note": "Only named point records tagged amenity=toilets in the existing OSM snapshot are included. Access, fees and opening hours may change."
+    },
+    "rest": {
+      "status": "partial",
+      "note": "Only named bench point records in the existing OSM snapshot are included. Most ordinary benches are unnamed and therefore absent. Shade is not implied."
+    },
+    "tree": {
+      "status": "partial",
+      "note": "Only named individual-tree point records in the existing OSM snapshot are included. This is not a street-tree or canopy inventory and does not establish shade."
+    }
+  },
+  "features": [
+    {
+      "id": "gla-cool-space-205",
+      "category": "cool-space",
+      "subtype": "official-cool-space",
+      "name": "Old Diorama Arts Centre",
+      "coordinate": [-0.1392397475, 51.5261889171],
+      "sourceRef": { "dataset": "gla-cool-spaces-2025", "recordId": 205, "url": "https://data.london.gov.uk/dataset/cool-space-data-2025-2z19p" },
+      "details": { "coolSpaceRegisterYear": 2025, "coolSpaceTier": 1, "fee": "no", "wheelchair": "yes", "indoor": "yes", "openingHours": "Mon–Thu 09:00–22:00; Fri–Sat 09:00–18:00; Sun 10:00–18:00" }
+    },
+    {
+      "id": "gla-cool-space-204",
+      "category": "cool-space",
+      "subtype": "official-cool-space",
+      "name": "London National Park City Lobby",
+      "coordinate": [-0.1425023349, 51.5175806498],
+      "sourceRef": { "dataset": "gla-cool-spaces-2025", "recordId": 204, "url": "https://data.london.gov.uk/dataset/cool-space-data-2025-2z19p" },
+      "details": { "coolSpaceRegisterYear": 2025, "coolSpaceTier": 2, "fee": "no", "wheelchair": "no", "indoor": "yes", "openingHours": "Mon–Fri 12:00–18:00" }
+    },
+    {
+      "id": "gla-cool-space-203",
+      "category": "cool-space",
+      "subtype": "official-cool-space",
+      "name": "Building Centre",
+      "coordinate": [-0.131563923, 51.5196551103],
+      "sourceRef": { "dataset": "gla-cool-spaces-2025", "recordId": 203, "url": "https://data.london.gov.uk/dataset/cool-space-data-2025-2z19p" },
+      "details": { "coolSpaceRegisterYear": 2025, "coolSpaceTier": 1, "fee": "no", "wheelchair": "yes", "indoor": "yes", "openingHours": "Mon–Fri 08:00–18:00" }
+    },
+    {
+      "id": "gla-cool-space-250",
+      "category": "cool-space",
+      "subtype": "official-cool-space",
+      "name": "British Library",
+      "coordinate": [-0.1269885293, 51.5299867477],
+      "sourceRef": { "dataset": "gla-cool-spaces-2025", "recordId": 250, "url": "https://data.london.gov.uk/dataset/cool-space-data-2025-2z19p" },
+      "details": { "coolSpaceRegisterYear": 2025, "coolSpaceTier": 1, "fee": "no", "wheelchair": "yes", "indoor": "yes", "openingHours": "Mon–Thu 09:30–20:00; Fri 09:30–18:00; Sat 09:30–17:00; Sun 11:00–17:00" }
+    },
+    {
+      "id": "gla-cool-space-107",
+      "category": "cool-space",
+      "subtype": "official-cool-space",
+      "name": "Pancras Square Library",
+      "coordinate": [-0.126577611, 51.53387536],
+      "sourceRef": { "dataset": "gla-cool-spaces-2025", "recordId": 107, "url": "https://data.london.gov.uk/dataset/cool-space-data-2025-2z19p" },
+      "details": { "coolSpaceRegisterYear": 2025, "coolSpaceTier": 1, "fee": "no", "wheelchair": "yes", "indoor": "yes", "openingHours": "Mon–Sat 08:00–20:00; Sun 11:00–17:00" }
+    },
+    {
+      "id": "gla-cool-space-15",
+      "category": "cool-space",
+      "subtype": "official-cool-space",
+      "name": "Wellcome Collection",
+      "coordinate": [-0.13385, 51.52617],
+      "sourceRef": { "dataset": "gla-cool-spaces-2025", "recordId": 15, "url": "https://data.london.gov.uk/dataset/cool-space-data-2025-2z19p" },
+      "details": { "coolSpaceRegisterYear": 2025, "coolSpaceTier": 1, "fee": "no", "wheelchair": "yes", "indoor": "yes", "openingHours": "Mon–Wed and Fri–Sun 10:00–18:00; Thu 10:00–20:00" }
+    },
+    {
+      "id": "gla-cool-space-135",
+      "category": "cool-space",
+      "subtype": "official-cool-space",
+      "name": "St Pancras and Somers Town Living Centre",
+      "coordinate": [-0.1295200445, 51.5311871941],
+      "sourceRef": { "dataset": "gla-cool-spaces-2025", "recordId": 135, "url": "https://data.london.gov.uk/dataset/cool-space-data-2025-2z19p" },
+      "details": { "coolSpaceRegisterYear": 2025, "coolSpaceTier": 1, "fee": "no", "wheelchair": "yes", "indoor": "yes", "openingHours": "Mon–Fri 09:00–17:00; weekends vary" }
+    },
+    {
+      "id": "gla-cool-space-136",
+      "category": "cool-space",
+      "subtype": "official-cool-space",
+      "name": "Somers Town Community Centre",
+      "coordinate": [-0.130595984, 51.5320226797],
+      "sourceRef": { "dataset": "gla-cool-spaces-2025", "recordId": 136, "url": "https://data.london.gov.uk/dataset/cool-space-data-2025-2z19p" },
+      "details": { "coolSpaceRegisterYear": 2025, "coolSpaceTier": 1, "fee": "no", "wheelchair": "yes", "indoor": "yes", "openingHours": "Mon–Fri 09:00–17:00; weekends vary" }
+    },
+    {
+      "id": "osm-node-6979687013",
+      "category": "drinking-water",
+      "subtype": "drinking-fountain",
+      "name": "Captain Robert Hansler J.P. Fountain",
+      "coordinate": [-0.124503, 51.5301981],
+      "sourceRef": { "osmType": "node", "osmId": 6979687013, "url": "https://www.openstreetmap.org/node/6979687013" },
+      "details": { "access": "yes", "indoor": "no" }
+    },
+    {
+      "id": "osm-node-12459319971",
+      "category": "drinking-water",
+      "subtype": "drinking-fountain",
+      "name": "Trinkwasserbrunnen",
+      "coordinate": [-0.1360646, 51.5254672],
+      "sourceRef": { "osmType": "node", "osmId": 12459319971, "url": "https://www.openstreetmap.org/node/12459319971" },
+      "details": { "openingHours": "24/7" }
+    },
+    {
+      "id": "osm-node-12285038206",
+      "category": "drinking-water",
+      "subtype": "drinking-fountain",
+      "name": "Guilford Place fountain",
+      "coordinate": [-0.1194647, 51.5234737],
+      "sourceRef": { "osmType": "node", "osmId": 12285038206, "url": "https://www.openstreetmap.org/node/12285038206" }
+    },
+    {
+      "id": "osm-node-3341983993",
+      "category": "toilet",
+      "subtype": "toilet",
+      "name": "Hunter Street Health Centre toilets",
+      "coordinate": [-0.1235919, 51.5247411],
+      "sourceRef": { "osmType": "node", "osmId": 3341983993, "url": "https://www.openstreetmap.org/node/3341983993" },
+      "details": { "access": "customers", "wheelchair": "yes" }
+    },
+    {
+      "id": "osm-node-10130184218",
+      "category": "rest",
+      "subtype": "bench",
+      "name": "Olympic Ring benches",
+      "coordinate": [-0.1274606, 51.5343542],
+      "sourceRef": { "osmType": "node", "osmId": 10130184218, "url": "https://www.openstreetmap.org/node/10130184218" }
+    },
+    {
+      "id": "osm-node-10130184219",
+      "category": "rest",
+      "subtype": "bench",
+      "name": "Olympic Ring benches",
+      "coordinate": [-0.1274472, 51.5343413],
+      "sourceRef": { "osmType": "node", "osmId": 10130184219, "url": "https://www.openstreetmap.org/node/10130184219" }
+    },
+    {
+      "id": "osm-node-10130184220",
+      "category": "rest",
+      "subtype": "bench",
+      "name": "Olympic Ring benches",
+      "coordinate": [-0.1275318, 51.5344286],
+      "sourceRef": { "osmType": "node", "osmId": 10130184220, "url": "https://www.openstreetmap.org/node/10130184220" }
+    },
+    {
+      "id": "osm-node-10130184221",
+      "category": "rest",
+      "subtype": "bench",
+      "name": "Olympic Ring benches",
+      "coordinate": [-0.1275229, 51.5344439],
+      "sourceRef": { "osmType": "node", "osmId": 10130184221, "url": "https://www.openstreetmap.org/node/10130184221" }
+    },
+    {
+      "id": "osm-node-1509618150",
+      "category": "tree",
+      "subtype": "individual-tree",
+      "name": "Anne Frank's Tree",
+      "coordinate": [-0.1271548, 51.5291328],
+      "sourceRef": { "osmType": "node", "osmId": 1509618150, "url": "https://www.openstreetmap.org/node/1509618150" }
+    },
+    {
+      "id": "osm-node-3113617872",
+      "category": "tree",
+      "subtype": "individual-tree",
+      "name": "Tree for the Victims of Hiroshima",
+      "coordinate": [-0.1293724, 51.5253272],
+      "sourceRef": { "osmType": "node", "osmId": 3113617872, "url": "https://www.openstreetmap.org/node/3113617872" },
+      "details": { "wheelchair": "yes" }
+    },
+    {
+      "id": "osm-node-3114822464",
+      "category": "tree",
+      "subtype": "individual-tree",
+      "name": "Tree for International Year of Peace, 1986",
+      "coordinate": [-0.128727, 51.5247127],
+      "sourceRef": { "osmType": "node", "osmId": 3114822464, "url": "https://www.openstreetmap.org/node/3114822464" }
+    },
+    {
+      "id": "osm-node-3114822465",
+      "category": "tree",
+      "subtype": "individual-tree",
+      "name": "Tree for the Centenary of the National Union of Public Employees, 1989",
+      "coordinate": [-0.1283914, 51.5247657],
+      "sourceRef": { "osmType": "node", "osmId": 3114822465, "url": "https://www.openstreetmap.org/node/3114822465" },
+      "details": { "wheelchair": "yes" }
+    },
+    {
+      "id": "osm-node-3114822480",
+      "category": "tree",
+      "subtype": "individual-tree",
+      "name": "Tree for Nirmal Roy",
+      "coordinate": [-0.1288286, 51.5248077],
+      "sourceRef": { "osmType": "node", "osmId": 3114822480, "url": "https://www.openstreetmap.org/node/3114822480" }
+    }
+  ]
+}
