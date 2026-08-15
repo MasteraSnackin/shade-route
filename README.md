@@ -24,7 +24,7 @@ potential direct sun. Physical field calibration is still pending.
 
 ![King’s Cross to UCLH route comparison on the 3D map](docs/demo/shaderoute-route-comparison.jpg)
 
-[Watch the 2-minute 14-second demonstration](docs/demo/shaderoute-frontline-london-demo.mp4)
+[Watch the 2-minute 14-second demonstration]([docs/demo/shaderoute-frontline-london-demo.mp4](https://1drv.ms/p/c/220eb79e024bb8de/IQAObMuJwcMHQZl4AM3bDRReAZ4pJ5oNVBf3PJWjuFZM_XY?e=Ffpm4h))
 · [View the slides](docs/demo/shaderoute-frontline-london-demo.pptx)
 · [Run ShadeRoute locally](#installation)
 
