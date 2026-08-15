@@ -177,13 +177,13 @@ The animated preview is silent; select it to watch the full narrated demonstrati
 
 ### Desktop
 
-![ShadeRoute desktop audit](docs/audit/after-desktop.png)
+[![10-second animated ShadeRoute desktop shadow playback](docs/demo/shaderoute-desktop-preview.gif)](docs/demo/shaderoute-frontline-london-demo.mp4)
 
 ### Mobile
 
-![ShadeRoute mobile audit](docs/audit/after-mobile-390.png)
+[![10-second animated ShadeRoute mobile shadow playback](docs/demo/shaderoute-mobile-shade-preview.gif)](docs/audit/shade-time-movement.mp4)
 
-![ShadeRoute after keyboard map-centre selection](docs/audit/map-centre-keyboard.png)
+![10-second animated ShadeRoute mobile map-centre selection](docs/demo/shaderoute-mobile-map-preview.gif)
 
 [Watch the shade-time interaction evidence (MP4)](docs/audit/shade-time-movement.mp4).
 The recording shows the controlled clear-sky model changing from sunrise through
