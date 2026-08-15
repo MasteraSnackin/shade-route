@@ -319,8 +319,8 @@
       },
       {
         "path": "lib/route-scoring-client.ts",
-        "bytes": 10518,
-        "sha256": "86ad2ccb37be584bd97e4b388430004a75b67997a92b56b5bde510b2e69fa48b"
+        "bytes": 13678,
+        "sha256": "a6086492adb525ba201fa214d2ee4448e3f4dbcb442dd4d4a4b0f43ee77eeccd"
       },
       {
         "path": "lib/route-walk-validation.ts",

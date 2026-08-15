@@ -134,9 +134,15 @@ scoring, so provider failure cannot corrupt a routing decision.
 ### Web Workers
 
 Scoring and shadow clients initialise grids by version, send generation-tagged
-requests and ignore responses from replaced work. Worker construction, runtime
-or message failures cause pending requests to reject. A deterministic synchronous
-calculation path keeps the pilot usable where Worker support is unavailable.
+requests and ignore responses from replaced work. A scoring request has a
+15-second watchdog; a silent worker is detached and terminated, all of its
+pending streams use the deterministic synchronous calculation path, and the
+next request constructs a fresh worker. Timers are cleared on response,
+cancellation and fallback. Worker construction, runtime and message failures
+also degrade to the local calculation path. If both paths fail, callers receive
+the fixed `RouteScoringUnavailableError` rather than a raw worker error. Shadow
+rendering has its own bounded worker timeout and the same local fallback
+principle, so the pilot remains usable where Worker support is unavailable.
 
 ### Offline pilot packs
 
