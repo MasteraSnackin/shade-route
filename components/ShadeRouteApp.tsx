@@ -5,6 +5,8 @@ import { MAP_CONTEXT_LEGEND, MAP_EXPOSURE_LEGEND, RouteMap, ROUTE_COLOURS, ROUTE
 import { ShadeTimeExplorer } from "./ShadeTimeExplorer";
 import { DepartureAdvice } from "./DepartureAdvice";
 import { HeatContext } from "./HeatContext";
+import { CurrentJourneyContext } from "./CurrentJourneyContext";
+import { CalibrationObserver } from "./CalibrationObserver";
 import { JourneyMode, type JourneyLocationRequestStatus } from "./JourneyMode";
 import { SavedJourneys } from "./SavedJourneys";
 import { FieldFeedback } from "./FieldFeedback";
@@ -18,13 +20,25 @@ import {
 } from "./OfflinePilotPreparation";
 import type { DepartureAdviceResult } from "../lib/departure-advice";
 import {
+  assessPointExposure,
   loadHeightGrid,
+  sensitivityEstablishesLowestSun,
+  sensitivitySupportsLowerSun,
   type LabelledRasterScore,
 } from "../lib/raster-shade";
 import {
+  compareRouteTimes,
+  routeCardExtraTimeLabel,
+  routeExtraWalkingLabel,
+  routeLongerTimeLabel,
+} from "../lib/route-card-presentation";
+import type { CalibrationModelPredictionRequest } from "../lib/field-calibration";
+import { SHADE_MODEL_VERSION } from "../lib/release-identity";
+import {
   isRouteScoringCancelledError,
-  routeScoringClient,
+  RouteScoringClient,
 } from "../lib/route-scoring-client";
+import scoringWorkerUrl from "../workers/scoring-worker.ts?worker&url";
 import {
   isLiveRouteRequestCancelledError,
   LiveRouteRequestClient,
@@ -59,6 +73,10 @@ import {
 type Profile = "vulnerable" | "worker";
 type Picking = "origin" | "destination" | null;
 
+const routeScoringClient = new RouteScoringClient(() => new Worker(scoringWorkerUrl, {
+  type: "module",
+}));
+
 interface RouteAccessSummary {
   hasAccessEvidence: boolean;
   hasStairs: boolean;
@@ -92,6 +110,7 @@ function formatDistance(metres: number) {
 
 function labelText(label: LabelledRasterScore["labels"][number]) {
   if (label === "least-sun") return "Least direct sun";
+  if (label === "lowest-estimate") return "Lowest displayed estimate";
   if (label === "fastest") return "Fastest";
   return "Suggested trade-off";
 }
@@ -187,9 +206,31 @@ function applyAccessGuard(
   const eligible = suitable.filter(
     (score) => score.durationSeconds / score.journeyCount <= fastestDuration + allowedExtra,
   );
-  const suggested = eligible.reduce((best, score) =>
-    score.estimatedDirectSunSeconds < best.estimatedDirectSunSeconds ? score : best,
+  const minimumVisibleDifference = 30 * Math.max(1, fastestSuitable.journeyCount);
+  const meaningfulImprovement = Math.max(
+    minimumVisibleDifference,
+    fastestSuitable.estimatedDirectSunSeconds * 0.05,
   );
+  const supportedAlternatives = eligible.filter((score) =>
+    score.routeId !== fastestSuitable.routeId &&
+    fastestSuitable.estimatedDirectSunSeconds - score.estimatedDirectSunSeconds >=
+      meaningfulImprovement &&
+    sensitivitySupportsLowerSun(fastestSuitable, score)
+  );
+  const sensitivityLowestAlternative = supportedAlternatives.find((candidate) =>
+    sensitivityEstablishesLowestSun(candidate, supportedAlternatives)
+  );
+  const supportedAlternativesOverlap =
+    supportedAlternatives.length > 1 && !sensitivityLowestAlternative;
+  const supportedAlternative = sensitivityLowestAlternative ??
+    supportedAlternatives.reduce<LabelledRasterScore | null>(
+      (best, score) => !best ||
+          score.durationSeconds / score.journeyCount < best.durationSeconds / best.journeyCount
+        ? score
+        : best,
+      null,
+    );
+  const suggested = supportedAlternative ?? fastestSuitable;
   const sunSaving = Math.max(
     0,
     fastestSuitable.estimatedDirectSunSeconds - suggested.estimatedDirectSunSeconds,
@@ -200,7 +241,9 @@ function applyAccessGuard(
   );
   const accessReason = suggested.routeId === fastestSuitable.routeId
     ? "Suggested because it is the fastest eligible route and avoids known stair and escalator instructions. Step-free access is not verified."
-    : `Suggested trade-off: about ${minutes(extraSeconds)} min longer per journey for about ${minutes(sunSaving)} fewer min in direct sun. It avoids known stair and escalator instructions; step-free access is not verified.`;
+    : supportedAlternativesOverlap
+      ? `Several access-eligible lower-sun ranges overlap, so this is the fastest materially lower-sun option whose whole sensitivity range is below the fastest eligible route. It adds about ${minutes(extraSeconds)} min per journey and avoids known stair and escalator instructions; step-free access is not verified.`
+      : `Suggested trade-off: about ${minutes(extraSeconds)} min longer per journey for about ${minutes(sunSaving)} fewer min in direct sun. It avoids known stair and escalator instructions; step-free access is not verified.`;
   return withoutSuggestion.map((score) => ({
     ...score,
     labels: score.routeId === suggested.routeId
@@ -238,6 +281,7 @@ export function ShadeRouteApp() {
   const [repeatEveryMinutes, setRepeatEveryMinutes] = useState(120);
   const [avoidSteps, setAvoidSteps] = useState(true);
   const [picking, setPicking] = useState<Picking>(null);
+  const [editingLocations, setEditingLocations] = useState({ origin: false, destination: false });
   const [customJourney, setCustomJourney] = useState(false);
   const [plannerCollapsed, setPlannerCollapsed] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -263,16 +307,48 @@ export function ShadeRouteApp() {
     status: OfflinePilotPreparationStatus;
   } | null>(null);
   const resultsRef = useRef<HTMLElement>(null);
+  const originInputRef = useRef<HTMLInputElement>(null);
   const calculationGenerationRef = useRef(0);
   const adviceGenerationRef = useRef(0);
   const liveRouteUiGenerationRef = useRef(0);
   const lastFocusedComparisonRef = useRef(0);
   const liveRouteClient = useMemo(() => new LiveRouteRequestClient(), []);
+  const handleOriginEditingChange = useCallback((editing: boolean) => {
+    setEditingLocations((current) => (
+      current.origin === editing ? current : { ...current, origin: editing }
+    ));
+  }, []);
+  const handleDestinationEditingChange = useCallback((editing: boolean) => {
+    setEditingLocations((current) => (
+      current.destination === editing ? current : { ...current, destination: editing }
+    ));
+  }, []);
 
   const area = useMemo(
     () => data?.areas.find((candidate) => candidate.id === areaId) ?? null,
     [data, areaId],
   );
+  const resolveCalibrationPrediction = useCallback(async (
+    request: Readonly<CalibrationModelPredictionRequest>,
+  ) => {
+    const selectedPilot = data?.areas.find((candidate) => candidate.id === request.pilotArea);
+    if (!selectedPilot || !pointInsideArea({
+      lat: request.latitude,
+      lon: request.longitude,
+    }, selectedPilot)) {
+      throw new Error("Choose an observation point inside the selected pilot area.");
+    }
+    const observedAt = parseLondonDateTime(request.observedLondonDateTime);
+    if (!observedAt) {
+      throw new Error("Enter a valid observation date and time in Europe/London.");
+    }
+    const grid = await loadHeightGrid(request.pilotArea);
+    return assessPointExposure(
+      [request.longitude, request.latitude],
+      observedAt,
+      grid,
+    ).exposure;
+  }, [data]);
   const effectiveJourneyCount = profile === "worker" ? journeyCount : 1;
   const scores = useMemo(() => scoreState &&
       scoreState.areaId === area?.id &&
@@ -622,6 +698,25 @@ export function ShadeRouteApp() {
     clearDirectionInspection();
   }, [clearDirectionInspection]);
 
+  const changeAvoidSteps = useCallback((nextAvoidSteps: boolean) => {
+    if (nextAvoidSteps === avoidSteps) return;
+    // Live alternatives are generated with the access preference in force at
+    // request time. Cancel any in-flight request and never retain a custom
+    // route set after that preference changes.
+    invalidateScores();
+    setAvoidSteps(nextAvoidSteps);
+    resetScheduledPreview();
+    setError(null);
+    if (customJourney) {
+      setRoutes([]);
+      setSelectedRouteId(null);
+      setPlannerCollapsed(false);
+      setNotice("Access preference changed. Compare routes again to request matching alternatives.");
+      return;
+    }
+    setNotice("Access preference updated. Bundled alternatives are being reassessed.");
+  }, [avoidSteps, customJourney, invalidateScores, resetScheduledPreview]);
+
   const changeSelectedJourneyDeparture = useCallback((value: string) => {
     clearDirectionInspection();
     const selectedInstant = parseLondonDateTime(value);
@@ -694,6 +789,7 @@ export function ShadeRouteApp() {
     setAreaId(nextArea.id);
     setOrigin(setup.origin);
     setDestination(setup.destination);
+    setEditingLocations({ origin: false, destination: false });
     setDeparture((current) => combineLondonDateAndTime(current, setup.departureTime));
     setProfile(setup.profile);
     setWalkingPace(setup.walkingPace ?? "standard");
@@ -725,6 +821,7 @@ export function ShadeRouteApp() {
     setAreaId(nextArea.id);
     setOrigin(nextArea.start);
     setDestination(nextArea.destination);
+    setEditingLocations({ origin: false, destination: false });
     invalidateScores();
     setRoutes(nextArea.routes);
     setSelectedRouteId(null);
@@ -753,6 +850,7 @@ export function ShadeRouteApp() {
     }
     if (picking === "origin") setOrigin(point);
     else setDestination(point);
+    setEditingLocations((current) => ({ ...current, [picking]: false }));
     setPicking(null);
     setCustomJourney(true);
     setPlannerCollapsed(false);
@@ -774,6 +872,7 @@ export function ShadeRouteApp() {
     if (pointsMatch(current, point) && current.name === point.name) return;
     if (target === "origin") setOrigin(point);
     else setDestination(point);
+    setEditingLocations((current) => ({ ...current, [target]: false }));
     setPicking(null);
     setCustomJourney(true);
     clearRoutesForEditing();
@@ -784,11 +883,15 @@ export function ShadeRouteApp() {
     setInspectionDeparture(null);
     setPlannerCollapsed(false);
     setError(null);
-    setNotice("Bundled local place selected. Compare routes when both endpoints are ready.");
+    setNotice("Location selected. Compare routes when both endpoints are ready.");
   }, [area, clearRoutesForEditing, destination, origin]);
 
   const compareRoutes = useCallback(async () => {
     if (!area) return;
+    if (editingLocations.origin || editingLocations.destination) {
+      setError("Choose a matching start and destination result, or set the point on the map, before comparing routes.");
+      return;
+    }
     if (haversineMetres([origin.lon, origin.lat], [destination.lon, destination.lat]) < 20) {
       setError("Start and destination need to be at least 20 metres apart.");
       return;
@@ -829,6 +932,7 @@ export function ShadeRouteApp() {
       return;
     }
 
+    const requestedAccessPreference = avoidSteps ? "avoid-known-steps" : "standard";
     const requestGeneration = liveRouteUiGenerationRef.current + 1;
     liveRouteUiGenerationRef.current = requestGeneration;
     setLoading(true);
@@ -839,6 +943,7 @@ export function ShadeRouteApp() {
         area: { id: area.id, bbox: area.bbox },
         origin: { lat: origin.lat, lon: origin.lon },
         destination: { lat: destination.lat, lon: destination.lon },
+        accessPreference: requestedAccessPreference,
       });
       if (requestGeneration !== liveRouteUiGenerationRef.current) return;
       invalidateScores();
@@ -850,7 +955,12 @@ export function ShadeRouteApp() {
       setFeedbackOpen(false);
       setActiveDirectionIndex(null);
       setInspectionDeparture(null);
-      setNotice(`${result.routes.length} live walking route${result.routes.length === 1 ? "" : "s"} found.`);
+      setNotice(
+        `${result.routes.length} live walking route${result.routes.length === 1 ? "" : "s"} found.` +
+        (requestedAccessPreference === "avoid-known-steps"
+          ? " Known steps were strongly penalised where map data allowed; routes are not confirmed step-free."
+          : ""),
+      );
       setPlannerCollapsed(true);
       setComparisonFocusSequence((current) => current + 1);
     } catch (caught) {
@@ -860,11 +970,12 @@ export function ShadeRouteApp() {
     } finally {
       if (requestGeneration === liveRouteUiGenerationRef.current) setLoading(false);
     }
-  }, [area, origin, destination, online, invalidateScores, liveRouteClient]);
+  }, [area, origin, destination, editingLocations, online, avoidSteps, invalidateScores, liveRouteClient]);
 
   const reverseJourney = useCallback(() => {
     setOrigin(destination);
     setDestination(origin);
+    setEditingLocations({ origin: false, destination: false });
     clearRoutesForEditing();
     setCustomJourney(true);
     setJourneyModeOpen(false);
@@ -898,6 +1009,7 @@ export function ShadeRouteApp() {
           setDestination(matchingArea.destination);
         }
         setOrigin(point);
+        setEditingLocations({ origin: false, destination: false });
         clearRoutesForEditing();
         setJourneyModeOpen(false);
         setFeedbackOpen(false);
@@ -1031,7 +1143,15 @@ export function ShadeRouteApp() {
                     : "one journey"}
                 </small>
               </div>
-              <button type="button" onClick={() => setPlannerCollapsed(false)}>Edit journey</button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPlannerCollapsed(false);
+                  window.requestAnimationFrame(() => originInputRef.current?.focus());
+                }}
+              >
+                Change locations
+              </button>
             </div>
             <div className="planner-controls-body">
             <div className="control-section">
@@ -1075,9 +1195,12 @@ export function ShadeRouteApp() {
                 <div className="journey-point-row">
                   <span className="point-letter">A</span>
                   <LocalPlaceSearch
+                    key={`${area.id}:origin:${origin.lat}:${origin.lon}:${origin.name}`}
                     area={area}
                     endpoint={origin}
                     endpointLabel="Start"
+                    inputRef={originInputRef}
+                    onEditingChange={handleOriginEditingChange}
                     onSelect={(point) => chooseLocalPlace("origin", point)}
                   />
                   <button
@@ -1094,9 +1217,11 @@ export function ShadeRouteApp() {
                 <div className="journey-point-row">
                   <span className="point-letter point-letter-end">B</span>
                   <LocalPlaceSearch
+                    key={`${area.id}:destination:${destination.lat}:${destination.lon}:${destination.name}`}
                     area={area}
                     endpoint={destination}
                     endpointLabel="Destination"
+                    onEditingChange={handleDestinationEditingChange}
                     onSelect={(point) => chooseLocalPlace("destination", point)}
                   />
                   <button
@@ -1114,7 +1239,10 @@ export function ShadeRouteApp() {
                 Use my location for the start
               </button>
               <p className="local-place-note">
-                Place search uses bundled pilot landmarks and partial amenity records only. Use Map to refine an exact point.
+                Enter an address, place or postcode and choose a matching result. Bundled pilot places work offline. When configured and online, typed search text is sent to OS Names or Geoapify and results are restricted to this pilot area; ShadeRoute does not save the search. Use Map to refine an exact point.
+                {" "}Online search attribution: Contains OS data © Crown copyright and database rights 2026
+                {" "}(<a href="https://osdatahub.os.uk/support/legal/api-terms" target="_blank" rel="noreferrer">OS API terms</a>)
+                {" "}and <a href="https://www.geoapify.com/" target="_blank" rel="noreferrer">Powered by Geoapify</a>.
               </p>
               <div className="departure-field">
                 <label htmlFor="planner-departure">
@@ -1202,7 +1330,7 @@ export function ShadeRouteApp() {
                 type="checkbox"
                 aria-label="Avoid known stairs and escalators"
                 checked={avoidSteps}
-                onChange={(event) => setAvoidSteps(event.target.checked)}
+                onChange={(event) => changeAvoidSteps(event.target.checked)}
               />
               <span>
                 <strong>Avoid known stairs and escalators</strong>
@@ -1286,7 +1414,27 @@ export function ShadeRouteApp() {
                         ? candidateScore.durationSeconds / Math.max(1, candidateScore.journeyCount)
                         : walkingDurationSeconds(candidate, walkingPace);
                     }));
-                    const extraMinutes = minutes(perJourneyDuration - fastestDuration);
+                    const timeComparison = compareRouteTimes(perJourneyDuration, fastestDuration);
+                    const isFastest = timeComparison.kind === "same";
+                    const isRecommended = score?.labels.includes("recommended") ?? false;
+                    const isAccessPreferenceSuggestion =
+                      isRecommended && score?.recommendationReason?.includes("avoids known stair and escalator") === true;
+                    const sensitivityRangesOverlap = Boolean(
+                      score &&
+                      fastestScore &&
+                      score.routeId !== fastestScore.routeId &&
+                      score.estimatedDirectSunSeconds < fastestScore.estimatedDirectSunSeconds &&
+                      !sensitivitySupportsLowerSun(fastestScore, score),
+                    );
+                    const choiceStatus = isFastest
+                      ? "Fastest"
+                      : isRecommended
+                        ? isAccessPreferenceSuggestion
+                          ? "Suggested for access preference"
+                          : "Suggested trade-off"
+                        : sensitivityRangesOverlap
+                          ? "Alternative · ranges overlap"
+                          : "Alternative";
                     const routeJourneyCount = profile === "worker" ? journeyCount : 1;
                     return (
                       <button
@@ -1298,12 +1446,12 @@ export function ShadeRouteApp() {
                       >
                         <span className="route-decision-option-label">
                           <i style={{ backgroundColor: ROUTE_COLOURS[routeIndex] }}>{routeIndex + 1}</i>
-                          Option {routeIndex + 1} · {score?.labels.includes("recommended") ? "Suggested trade-off" : extraMinutes === 0 ? "Fastest" : "Alternative"}
+                          Option {routeIndex + 1} · {choiceStatus}
                         </span>
                         <strong>{descriptiveRouteName(route, routeIndex)}</strong>
                         <span className="route-decision-metrics">
                           <b>{minutes(perJourneyDuration)} min</b>
-                          <b>{extraMinutes > 0 ? `+${extraMinutes} min vs fastest` : "No extra time"}</b>
+                          <b>{routeCardExtraTimeLabel(timeComparison)}</b>
                         </span>
                         <span className="route-decision-exposure">
                           {!score
@@ -1452,7 +1600,7 @@ export function ShadeRouteApp() {
               </div>
               <dl>
                 <div><dt>Surface data</dt><dd>EA LiDAR, surveys 2000–2022</dd></div>
-                <div><dt>Field checks</dt><dd>0 recorded — calibration pending</dd></div>
+                <div><dt>Published field checks</dt><dd>0 — calibration pending</dd></div>
               </dl>
               <p>
                 Suggestions are withheld for low coverage or low sun. The sensitivity band is not a statistical confidence interval.
@@ -1486,7 +1634,7 @@ export function ShadeRouteApp() {
                   provenance: {
                     routeData: {
                       source: customJourney
-                        ? "OpenStreetMap via the FOSSGIS Valhalla walking-route service"
+                        ? "OpenStreetMap via the configured Valhalla walking-route service"
                         : "Bundled OpenStreetMap pilot routes generated through Valhalla",
                       sourceDate: customJourney
                         ? "Live request at decision time; underlying OpenStreetMap feature dates vary"
@@ -1499,7 +1647,7 @@ export function ShadeRouteApp() {
                     },
                     model: {
                       name: "ShadeRoute absolute-elevation clear-sky model",
-                      version: "prototype-2026-08-12",
+                      version: SHADE_MODEL_VERSION,
                     },
                   },
                 }}
@@ -1515,6 +1663,7 @@ export function ShadeRouteApp() {
                 )}
               />
             )}
+            <CurrentJourneyContext areaId={area.id} />
           </div>
         </section>
 
@@ -1560,12 +1709,23 @@ export function ShadeRouteApp() {
                 const worstSun = score ? minutes(score.directSunRangeSeconds[1]) : null;
                 const fastestSun = fastestScore ? minutes(fastestScore.estimatedDirectSunSeconds) : null;
                 const fastestShade = fastestScore?.estimatedShadePercent ?? null;
-                const timeDifference = fastestScore
-                  ? minutes(perJourneyDuration - fastestScore.durationSeconds / fastestScore.journeyCount)
-                  : 0;
+                const timeComparison = fastestScore
+                  ? compareRouteTimes(
+                    perJourneyDuration,
+                    fastestScore.durationSeconds / Math.max(1, fastestScore.journeyCount),
+                  )
+                  : compareRouteTimes(perJourneyDuration, perJourneyDuration);
                 const sunDifference = expectedSun !== null && fastestSun !== null
                   ? fastestSun - expectedSun
                   : 0;
+                const hasSupportedLowerSun = Boolean(
+                  score &&
+                  fastestScore &&
+                  score.routeId !== fastestScore.routeId &&
+                  sensitivitySupportsLowerSun(fastestScore, score),
+                );
+                const isAccessPreferenceSuggestion =
+                  score?.recommendationReason?.includes("avoids known stair and escalator") === true;
                 return (
                   <article key={route.id} className={`route-card${active ? " is-selected" : ""}`}>
                     <button type="button" className="route-card-select" onClick={() => chooseRoute(route.id)} aria-pressed={active}>
@@ -1578,7 +1738,13 @@ export function ShadeRouteApp() {
                     </button>
 
                     <div className="route-labels">
-                      {score?.labels.map((label) => <span key={label}>{labelText(label)}</span>)}
+                      {score?.labels.map((label) => {
+                        if (label === "recommended" && score.routeId === fastestScore?.routeId) return null;
+                        const text = label === "recommended" && isAccessPreferenceSuggestion
+                          ? "Suggested for access preference"
+                          : labelText(label);
+                        return <span key={label}>{text}</span>;
+                      })}
                     </div>
 
                     <div className="access-flags" aria-label="Route access information">
@@ -1617,9 +1783,11 @@ export function ShadeRouteApp() {
 
                     {score?.isDaylight && fastestScore && route.id !== fastestScore.routeId && (
                       <p className="tradeoff">
-                        {timeDifference > 0 ? `${timeDifference} min longer per journey` : "Similar journey time"}
-                        {sunDifference > 0
+                        {routeLongerTimeLabel(timeComparison)}
+                        {sunDifference > 0 && hasSupportedLowerSun
                           ? ` · about ${sunDifference} fewer min in direct sun${routeJourneyCount > 1 ? " across the scheduled journeys" : ""}`
+                          : sunDifference > 0
+                            ? " · lower point estimate, but sensitivity ranges overlap"
                           : " · no material sun reduction"}
                       </p>
                     )}
@@ -1629,12 +1797,14 @@ export function ShadeRouteApp() {
                         <strong>
                           {route.id === fastestScore.routeId
                             ? "This is the fastest route"
-                            : sunDifference > 0
+                            : sunDifference > 0 && hasSupportedLowerSun
                               ? `About ${sunDifference} fewer min in direct sun`
+                              : sunDifference > 0
+                                ? "No clear lower-sun advantage"
                               : "No modelled direct-sun saving"}
                         </strong>
                         <span>
-                          {timeDifference > 0 ? `${timeDifference} min extra walking` : "No extra walking time"}
+                          {routeExtraWalkingLabel(timeComparison)}
                           {score.estimatedShadePercent !== null && fastestShade !== null
                             ? ` · ${Math.round(score.estimatedShadePercent - fastestShade)} percentage points shade versus fastest`
                             : ""}
@@ -1680,7 +1850,7 @@ export function ShadeRouteApp() {
                           window.requestAnimationFrame(() => document.getElementById("journey-mode-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" }));
                         }}
                       >
-                        {route.directions.length ? "Preview walking steps" : "Step preview unavailable"}
+                        {route.directions.length ? "Open field route reference" : "Field route reference unavailable"}
                       </button>
                     )}
                   </article>
@@ -1792,6 +1962,22 @@ export function ShadeRouteApp() {
               time-stamped observations on both corridors must be compared with predicted sun and shade sections.
             </p>
           </div>
+          <details className="calibration-workflow">
+            <summary>
+              <span>Field team tool</span>
+              <strong>Open the model-first fixed-point observer</strong>
+            </summary>
+            <p>
+              Use this only at a planned physical validation point. ShadeRoute calculates and freezes
+              the selected pilot&apos;s raster state for the exact point and London time before revealing
+              controls for what is physically observed.
+            </p>
+            <CalibrationObserver
+              pilotAreas={data.areas}
+              initialPilotAreaId={area.id}
+              resolvePrediction={resolveCalibrationPrediction}
+            />
+          </details>
           <div className="limitations">
             <h3>Use this as planning support, not a safety guarantee</h3>
             <p>
@@ -1808,10 +1994,14 @@ export function ShadeRouteApp() {
         <div><strong>ShadeRoute</strong><span>A Frontline London working prototype</span></div>
         <p>
           Routes and map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap contributors</a>.
+          {" "}Online OS Names results contain OS data © Crown copyright and database rights 2026; see the
+          {" "}<a href="https://osdatahub.os.uk/support/legal/api-terms" target="_blank" rel="noreferrer">OS API terms</a>.
+          {" "}Geoapify online results are <a href="https://www.geoapify.com/" target="_blank" rel="noreferrer">Powered by Geoapify</a>.
           Contains Environment Agency data © Environment Agency copyright and/or database right 2022, licensed under the
           {" "}<a href="https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/" target="_blank" rel="noreferrer">Open Government Licence v3.0</a>.
           {" "}Cool-space records are from <a href="https://data.london.gov.uk/dataset/cool-space-data-2025-2z19p" target="_blank" rel="noreferrer">GLA Cool Space Data 2025</a>
           {" "}under the <a href="https://data.london.gov.uk/about/terms-and-conditions/" target="_blank" rel="noreferrer">London Datastore terms</a>.
+          {" "}Public-realm tree inventory points are from the <a href="https://data.london.gov.uk/dataset/london-public-realm-trees-2r45m" target="_blank" rel="noreferrer">GLA November 2025 dataset</a> under OGL v3; they do not establish canopy or shade.
           The GLA does not warrant their quality or accuracy and does not endorse ShadeRoute.
         </p>
       </footer>

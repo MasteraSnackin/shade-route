@@ -1,0 +1,53 @@
+name: Feature request
+description: Propose a practical, testable improvement for ShadeRoute.
+title: "[Feature]: "
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: User need
+      description: Who needs this, in what situation, and what decision would it improve?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Proposed outcome
+      description: Describe observable behaviour, not only an implementation.
+    validations:
+      required: true
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Geographic scope
+      options:
+        - Waterloo pilot
+        - King's Cross pilot
+        - Both pilots
+        - Future wider-area work
+        - Not geographic
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence and acceptance checks
+      description: Link the underlying need and state how the feature can be tested.
+    validations:
+      required: true
+  - type: textarea
+    id: risks
+    attributes:
+      label: Safety, privacy, accessibility and data implications
+      description: State unknowns, new providers or datasets, and possible misuse.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues and did not find the same request.
+          required: true
+        - label: The request does not depend on presenting an unverified route as safe or medically protective.
+          required: true

@@ -20,11 +20,20 @@ test("server-renders the ShadeRoute shell and production metadata", async () => 
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
+  assert.match(response.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/);
+  assert.equal(response.headers.get("permissions-policy"), "camera=(), microphone=(), geolocation=(self)");
+  assert.equal(response.headers.get("referrer-policy"), "no-referrer");
+  assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(response.headers.get("x-frame-options"), "DENY");
+  assert.equal(response.headers.get("strict-transport-security"), null);
 
   const html = await response.text();
   assert.match(html, /<title>ShadeRoute — less direct sun on foot<\/title>/i);
   assert.match(html, /estimated direct-sun exposure on two London hospital corridors/i);
   assert.match(html, /Loading the ShadeRoute London data pack/);
+  assert.match(html, /rel="manifest" href="\/manifest\.webmanifest"/i);
+  assert.match(html, /rel="apple-touch-icon"[^>]+href="\/apple-touch-icon\.png"/i);
+  assert.match(html, /name="theme-color" content="#075f56"/i);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/i);
 });
 

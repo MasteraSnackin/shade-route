@@ -3,10 +3,14 @@ import {
   staleHeatContext,
   UKHSA_HEAT_METRIC_URL,
   unavailableHeatContext,
-  type HeatContextAvailable,
+  type HeatContextCacheable,
 } from "../../../lib/heat-context.ts";
 import { readBoundedJson } from "../../../lib/bounded-json.ts";
 import { raceWithAbort } from "../../../lib/abort-race.ts";
+import {
+  emitOperationalEvent,
+  type OperationalDeliveryPath,
+} from "../../../lib/operational-events.ts";
 
 const UPSTREAM_TIMEOUT_MS = 4_000;
 const MAX_UPSTREAM_RESPONSE_BYTES = 256_000;
@@ -23,13 +27,13 @@ const UNAVAILABLE_RESPONSE_HEADERS = {
 };
 
 interface CachedContext {
-  value: HeatContextAvailable;
+  value: HeatContextCacheable;
   freshUntil: number;
   staleUntil: number;
 }
 
 let cachedContext: CachedContext | undefined;
-let refreshInFlight: Promise<HeatContextAvailable> | undefined;
+let refreshInFlight: Promise<HeatContextCacheable> | undefined;
 
 interface HeatContextFetchOptions {
   fetchImplementation?: typeof fetch;
@@ -91,23 +95,48 @@ async function refreshHeatContext(now: number) {
   return refreshInFlight;
 }
 
-async function currentHeatContext() {
+interface CurrentHeatContext {
+  value: HeatContextCacheable | null;
+  delivery: OperationalDeliveryPath;
+}
+
+async function currentHeatContext(): Promise<CurrentHeatContext> {
   const now = Date.now();
-  if (cachedContext && cachedContext.freshUntil > now) return cachedContext.value;
+  if (cachedContext && cachedContext.freshUntil > now) {
+    return { value: cachedContext.value, delivery: "cache" };
+  }
 
   try {
-    return await refreshHeatContext(now);
+    return { value: await refreshHeatContext(now), delivery: "upstream" };
   } catch {
     if (cachedContext && cachedContext.staleUntil > now) {
-      return staleHeatContext(cachedContext.value);
+      return { value: staleHeatContext(cachedContext.value), delivery: "stale_cache" };
     }
-    return null;
+    return { value: null, delivery: "none" };
   }
 }
 
 export async function GET() {
+  const startedAt = performance.now();
   const context = await currentHeatContext();
-  if (context) return Response.json(context, { headers: AVAILABLE_RESPONSE_HEADERS });
+  const statusCode = context.value ? 200 : 503;
+  const outcome = !context.value
+    ? "unavailable"
+    : context.value.stale
+      ? "stale"
+      : context.value.status;
+
+  emitOperationalEvent({
+    event: "heat_context_response",
+    outcome,
+    delivery: context.delivery,
+    durationMs: performance.now() - startedAt,
+    statusCode,
+  });
+
+  if (context.value) {
+    return Response.json(context.value, { headers: AVAILABLE_RESPONSE_HEADERS });
+  }
 
   return Response.json(unavailableHeatContext(), {
     status: 503,

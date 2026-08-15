@@ -1,0 +1,66 @@
+name: Data or model discrepancy
+description: Report a suspected route, shade, access or map discrepancy.
+title: "[Data/model]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A discrepancy report is not field-validation evidence by itself. Remove people, number plates, home/work addresses and other sensitive details from attachments.
+  - type: dropdown
+    id: pilot
+    attributes:
+      label: Pilot area
+      options:
+        - Waterloo to St Thomas' Hospital
+        - King's Cross to UCLH
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Discrepancy type
+      options:
+        - Shade or direct sun
+        - Route geometry or directions
+        - Steps, crossing, surface or access information
+        - Building, tree, amenity or cool-space context
+        - Coverage, age or uncertainty presentation
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+    validations:
+      required: true
+  - type: textarea
+    id: location
+    attributes:
+      label: Non-sensitive location description
+      description: Use a public landmark, junction or route section rather than a private address.
+    validations:
+      required: true
+  - type: input
+    id: time
+    attributes:
+      label: London date and time shown by ShadeRoute
+      placeholder: 15 August 2026, 14:30 Europe/London
+  - type: textarea
+    id: discrepancy
+    attributes:
+      label: What differed
+      description: Separate what ShadeRoute displayed from what was independently observed or sourced.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence and source
+      description: Link public source data or describe the observation method, device and timing. State uncertainty.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I removed personal information and understand this report is not automatically accepted as calibration evidence.
+          required: true

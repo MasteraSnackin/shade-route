@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { RouteScoringClient, RouteScoringCancelledError } from "../lib/route-scoring-client.ts";
+import {
+  DEFAULT_SCORING_REQUEST_TIMEOUT_MS,
+  RouteScoringClient,
+  RouteScoringCancelledError,
+  RouteScoringUnavailableError,
+} from "../lib/route-scoring-client.ts";
 import {
   createLatestScoringRequestQueue,
   createScheduleScoreRequest,
@@ -44,6 +49,99 @@ function baseInput(grid = makeGrid()) {
     profile: "vulnerable",
     journeyCount: 1,
     repeatEveryMinutes: 120,
+  };
+}
+
+function makeTestWorker({
+  respondToScores = false,
+  delayedScoreResponseMs = null,
+  respondDuringCleanup = false,
+} = {}) {
+  const listeners = new Map();
+  const worker = {
+    messages: [],
+    terminated: false,
+    delayedResponseSent: false,
+    cleanupResponseSent: false,
+    postMessage(message) {
+      worker.messages.push(message);
+      if (respondToScores && message.type === SCHEDULE_SCORE_REQUEST) {
+        listeners.get("message")?.({
+          data: {
+            type: SCHEDULE_SCORE_SUCCESS,
+            task: "scores",
+            generation: message.generation,
+            scores: [],
+          },
+        });
+      }
+      if (delayedScoreResponseMs !== null && message.type === SCHEDULE_SCORE_REQUEST) {
+        const listener = listeners.get("message");
+        globalThis.setTimeout(() => {
+          worker.delayedResponseSent = true;
+          listener?.({
+            data: {
+              type: SCHEDULE_SCORE_SUCCESS,
+              task: "scores",
+              generation: message.generation,
+              scores: [{ stale: true }],
+            },
+          });
+        }, delayedScoreResponseMs);
+      }
+    },
+    terminate() {
+      worker.terminated = true;
+    },
+    addEventListener(type, listener) {
+      listeners.set(type, listener);
+    },
+    removeEventListener(type, listener) {
+      if (respondDuringCleanup && type === "message" && !worker.cleanupResponseSent) {
+        const request = worker.messages.findLast((message) => message.type === SCHEDULE_SCORE_REQUEST);
+        if (request) {
+          worker.cleanupResponseSent = true;
+          listener({
+            data: {
+              type: SCHEDULE_SCORE_SUCCESS,
+              task: "scores",
+              generation: request.generation,
+              scores: [{ stale: true }],
+            },
+          });
+        }
+      }
+      if (listeners.get(type) === listener) listeners.delete(type);
+    },
+    listenerCount() {
+      return listeners.size;
+    },
+  };
+  return worker;
+}
+
+function installTrackedTimers(context) {
+  let nextId = 0;
+  const active = new Map();
+  context.mock.method(globalThis, "setTimeout", (callback, delay = 0, ...args) => {
+    nextId += 1;
+    active.set(nextId, {
+      delay,
+      run: () => callback(...args),
+    });
+    return nextId;
+  });
+  context.mock.method(globalThis, "clearTimeout", (id) => {
+    active.delete(id);
+  });
+  return {
+    active,
+    run(id) {
+      const timer = active.get(id);
+      assert.ok(timer, `timer ${id} is not active`);
+      active.delete(id);
+      timer.run();
+    },
   };
 }
 
@@ -120,6 +218,188 @@ test("the client falls back safely when Worker construction is unavailable", asy
     const advice = await client.buildDepartureAdvice(baseInput());
     assert.equal(advice.withheldReason, "no-routes");
   });
+  client.dispose();
+});
+
+test("scoring watchdog options have a bounded production default", () => {
+  assert.equal(DEFAULT_SCORING_REQUEST_TIMEOUT_MS, 15_000);
+  assert.throws(
+    () => new RouteScoringClient(() => makeTestWorker(), { requestTimeoutMs: 0 }),
+    /between 1 and 60,000 milliseconds/,
+  );
+  assert.throws(
+    () => new RouteScoringClient(() => makeTestWorker(), { requestTimeoutMs: 60_001 }),
+    /between 1 and 60,000 milliseconds/,
+  );
+});
+
+test("a silent scoring worker times out, falls back, and is replaced safely", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const workers = [];
+  const client = new RouteScoringClient(() => {
+    const worker = makeTestWorker({ respondToScores: workers.length > 0 });
+    workers.push(worker);
+    return worker;
+  }, { requestTimeoutMs: 25 });
+
+  const timedOutScore = client.scoreRoutes(baseInput());
+  assert.equal(workers.length, 1);
+  assert.equal(workers[0].listenerCount(), 3);
+  context.mock.timers.tick(25);
+
+  assert.deepEqual(await timedOutScore, []);
+  assert.equal(workers[0].terminated, true);
+  assert.equal(workers[0].listenerCount(), 0);
+
+  assert.deepEqual(await client.scoreRoutes(baseInput()), []);
+  assert.equal(workers.length, 2, "the next request gets a fresh worker");
+  context.mock.timers.runAll();
+  assert.equal(workers[1].terminated, false, "a settled request leaves no stale watchdog");
+
+  client.dispose();
+  assert.equal(workers[1].terminated, true);
+  assert.equal(workers[1].listenerCount(), 0);
+});
+
+test("a silent departure-advice worker settles through the synchronous fallback", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const worker = makeTestWorker();
+  const client = new RouteScoringClient(() => worker, { requestTimeoutMs: 40 });
+
+  const advicePromise = client.buildDepartureAdvice(baseInput());
+  context.mock.timers.tick(40);
+  const advice = await advicePromise;
+
+  assert.equal(advice.withheldReason, "no-routes");
+  assert.equal(worker.terminated, true);
+  assert.equal(worker.listenerCount(), 0);
+  context.mock.timers.runAll();
+  client.dispose();
+});
+
+test("a response already queued by a timed-out worker cannot replace fallback output", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const worker = makeTestWorker({ delayedScoreResponseMs: 25 });
+  const client = new RouteScoringClient(() => worker, { requestTimeoutMs: 25 });
+
+  const scorePromise = client.scoreRoutes(baseInput());
+  context.mock.timers.tick(25);
+
+  assert.equal(worker.delayedResponseSent, true, "the retired worker attempted a late response");
+  assert.deepEqual(await scorePromise, [], "only the synchronous fallback may settle the request");
+  assert.equal(worker.terminated, true);
+  context.mock.timers.runAll();
+  client.dispose();
+});
+
+test("worker cleanup cannot re-entrantly settle a timed-out request", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const worker = makeTestWorker({ respondDuringCleanup: true });
+  const client = new RouteScoringClient(() => worker, { requestTimeoutMs: 25 });
+
+  const scorePromise = client.scoreRoutes(baseInput());
+  context.mock.timers.tick(25);
+
+  assert.equal(worker.cleanupResponseSent, true, "cleanup attempted a re-entrant response");
+  assert.deepEqual(await scorePromise, [], "the request remains owned by its fallback");
+  assert.equal(worker.terminated, true);
+  context.mock.timers.runAll();
+  client.dispose();
+});
+
+test("a failed synchronous fallback rejects with the fixed unavailable error", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const worker = makeTestWorker();
+  const client = new RouteScoringClient(() => worker, { requestTimeoutMs: 25 });
+  const invalidInput = {
+    ...baseInput(),
+    windowMinutes: -1,
+  };
+
+  const advicePromise = client.buildDepartureAdvice(invalidInput);
+  context.mock.timers.tick(25);
+
+  await assert.rejects(advicePromise, (error) => {
+    assert.ok(error instanceof RouteScoringUnavailableError);
+    assert.equal(error.name, "RouteScoringUnavailableError");
+    assert.equal(error.message, "Route exposure calculation is unavailable.");
+    return true;
+  });
+  assert.equal(worker.terminated, true);
+  assert.equal(worker.listenerCount(), 0);
+  context.mock.timers.runAll();
+  client.dispose();
+});
+
+test("watchdog and fallback timers are cleared on every settlement path", async (context) => {
+  const timers = installTrackedTimers(context);
+
+  const responsiveWorker = makeTestWorker({ respondToScores: true });
+  const responsiveClient = new RouteScoringClient(() => responsiveWorker, {
+    requestTimeoutMs: 25,
+  });
+  assert.deepEqual(await responsiveClient.scoreRoutes(baseInput()), []);
+  assert.equal(timers.active.size, 0, "a normal response clears its watchdog");
+  responsiveClient.dispose();
+
+  const cancelledWorker = makeTestWorker();
+  const cancelledClient = new RouteScoringClient(() => cancelledWorker, {
+    requestTimeoutMs: 25,
+  });
+  const cancelledPromise = cancelledClient.scoreRoutes(baseInput()).catch((error) => error);
+  assert.equal(timers.active.size, 1);
+  cancelledClient.cancelScores();
+  assert.ok(await cancelledPromise instanceof RouteScoringCancelledError);
+  assert.equal(timers.active.size, 0, "cancellation clears its watchdog");
+  cancelledClient.dispose();
+
+  const timedOutWorker = makeTestWorker();
+  const timedOutClient = new RouteScoringClient(() => timedOutWorker, {
+    requestTimeoutMs: 25,
+  });
+  const sharedInput = baseInput();
+  const scorePromise = timedOutClient.scoreRoutes(sharedInput);
+  const advicePromise = timedOutClient.buildDepartureAdvice(sharedInput);
+  assert.equal(timers.active.size, 2, "each pending result stream owns one watchdog");
+
+  const watchdogId = [...timers.active].find(([, timer]) => timer.delay === 25)?.[0];
+  assert.ok(watchdogId);
+  timers.run(watchdogId);
+  assert.equal(timers.active.size, 2, "the watchdogs are replaced by two fallback turns");
+  for (const [id, timer] of [...timers.active]) {
+    assert.equal(timer.delay, 0);
+    timers.run(id);
+  }
+
+  assert.deepEqual(await scorePromise, []);
+  assert.equal((await advicePromise).withheldReason, "no-routes");
+  assert.equal(timers.active.size, 0, "settled fallbacks leave no timers behind");
+  timedOutClient.dispose();
+  assert.equal(timedOutWorker.listenerCount(), 0);
+});
+
+test("a failed cancellation cannot dispatch through a detached worker reference", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const worker = makeTestWorker();
+  const originalPostMessage = worker.postMessage;
+  worker.postMessage = (message) => {
+    if (message.type === SCORING_CANCEL_REQUEST) throw new Error("cancel transport failed");
+    originalPostMessage(message);
+  };
+  const client = new RouteScoringClient(() => worker, { requestTimeoutMs: 25 });
+
+  const first = client.scoreRoutes(baseInput()).catch((error) => error);
+  const second = client.scoreRoutes(baseInput());
+
+  assert.ok(await first instanceof RouteScoringCancelledError);
+  assert.equal(
+    worker.messages.filter((message) => message.type === SCHEDULE_SCORE_REQUEST).length,
+    1,
+    "the replacement is not posted to the worker detached during cancellation",
+  );
+  context.mock.timers.tick(0);
+  assert.deepEqual(await second, []);
+  assert.equal(worker.terminated, true);
   client.dispose();
 });
 

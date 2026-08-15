@@ -1,6 +1,7 @@
 "use client";
 
 import * as maplibregl from "maplibre-gl";
+import mapLibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import type {
   CanvasSource,
   ExpressionSpecification,
@@ -8,19 +9,32 @@ import type {
   Map as MapLibreMap,
   StyleSpecification,
 } from "maplibre-gl";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Coordinate, NamedPoint, PilotArea, WalkingRoute } from "../lib/routes";
 import { loadHeightGrid, type ExposureSection, type ScheduleScore } from "../lib/raster-shade";
 import {
   createShadowGridInitialisation,
   createShadowRenderRequest,
   groundShadowFrameFromResponse,
+  isShadowRenderResponse,
   isShadowRenderResponseForGeneration,
   SHADOW_RENDER_FAILURE,
 } from "../lib/shadow-worker-protocol";
-import { heightGridCanvasCoordinates, renderGroundShadowFrame } from "../lib/shadow-raster";
+import {
+  GROUND_SHADOW_LEGEND,
+  heightGridCanvasCoordinates,
+  renderGroundShadowFrame,
+} from "../lib/shadow-raster";
 import type { GroundShadowFrame } from "../lib/shadow-raster";
+import {
+  concealGroundShadowOverlay,
+  groundShadowUnavailableMessage,
+  GROUND_SHADOW_LAYER_ID as SHADOW_LAYER_ID,
+  GROUND_SHADOW_SOURCE_ID as SHADOW_SOURCE_ID,
+  type GroundShadowUnavailableReason,
+} from "../lib/ground-shadow-overlay";
 import { loadRouteContext, type RouteContextCategory } from "../lib/route-context";
+import shadowWorkerUrl from "../workers/shadow-worker.ts?worker&url";
 
 const ROUTE_COLOURS = ["#075f56", "#c25425", "#4e4d91"];
 const ROUTE_DASHES: number[][] = [[1, 0], [2, 1.5], [0.5, 1.2]];
@@ -75,10 +89,10 @@ const EXPOSURE_SOURCE_ID = "selected-route-exposure";
 const ACTIVE_DIRECTION_SOURCE_ID = "active-route-direction";
 const ACTIVE_DIRECTION_CASING_ID = "active-route-direction-casing";
 const ACTIVE_DIRECTION_LAYER_ID = "active-route-direction-line";
-const SHADOW_SOURCE_ID = "ground-shadows";
-const SHADOW_LAYER_ID = "ground-shadows-layer";
 const CONTEXT_SOURCE_ID = "route-context-points";
 const CONTEXT_LAYER_ID = "route-context-points-layer";
+const MAP_LOAD_TIMEOUT_MS = 20_000;
+const SHADOW_WORKER_TIMEOUT_MS = 8_000;
 const EMPTY_FEATURE_COLLECTION = {
   type: "FeatureCollection" as const,
   features: [],
@@ -89,7 +103,34 @@ interface SunPositionStatus {
   isDaylight: boolean;
   azimuthDeg: number;
   altitudeDeg: number;
+  lowSun: boolean;
+  certainShadowPercent: number;
+  possibleShadowPercent: number;
+  unknownPercent: number;
+  searchLimitedPercent: number;
+  raySearchLimitMetres: number;
+  lowSunThresholdDegrees: number;
 }
+
+type ShadowOverlayStatus =
+  | { phase: "idle" }
+  | {
+      phase: "loading";
+      generation: number;
+      dateEpochMs: number;
+    }
+  | {
+      phase: "ready";
+      generation: number;
+      dateEpochMs: number;
+      renderMode: "worker" | "fallback";
+    }
+  | {
+      phase: "unavailable";
+      generation: number;
+      dateEpochMs: number;
+      message: string;
+    };
 
 interface ShadowWorkerGridState {
   worker: Worker;
@@ -184,6 +225,43 @@ function formatAngle(value: number) {
   return `${value < 0 ? "−" : ""}${Math.abs(value).toFixed(1)}°`;
 }
 
+function formatCoveragePercent(value: number) {
+  return `${Math.round(Math.max(0, Math.min(100, value)))}%`;
+}
+
+function groundShadowCoverageStatus(status: SunPositionStatus) {
+  if (!status.isDaylight) return "No direct sun while the sun is below the horizon";
+  const parts = [
+    `${formatCoveragePercent(status.certainShadowPercent)} shade supported by both height bounds`,
+    `${formatCoveragePercent(status.possibleShadowPercent)} possible shade within the height range`,
+  ];
+  if (status.unknownPercent > 0) {
+    parts.push(`${formatCoveragePercent(status.unknownPercent)} unknown`);
+  }
+  if (status.searchLimitedPercent > 0) {
+    parts.push(
+      `${formatCoveragePercent(status.searchLimitedPercent)} unresolved at the ${status.raySearchLimitMetres} m ray-search cap`,
+    );
+  }
+  return parts.join(" · ");
+}
+
+function groundShadowLimitWarning(status: SunPositionStatus) {
+  if (!status.isDaylight) return null;
+  const reasons: string[] = [];
+  if (status.lowSun) {
+    reasons.push(
+      `sun altitude is below ${status.lowSunThresholdDegrees}°, so long casts are especially sensitive to height error`,
+    );
+  }
+  if (status.searchLimitedPercent > 0) {
+    reasons.push(
+      `rays stop at ${status.raySearchLimitMetres} m, so longer possible shadows are not shown as shade`,
+    );
+  }
+  return reasons.length ? `Model warning: ${reasons.join("; ")}.` : null;
+}
+
 export function RouteMap({
   area,
   routes,
@@ -215,10 +293,29 @@ export function RouteMap({
   const shadowCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const shadowWorkerRef = useRef<Worker | null>(null);
   const shadowWorkerGridRef = useRef<ShadowWorkerGridState | null>(null);
-  const shadowWorkerUnavailableRef = useRef(false);
   const shadowGenerationRef = useRef(0);
   const shadowGridVersionRef = useRef(0);
   const [sunPosition, setSunPosition] = useState<SunPositionStatus | null>(null);
+  const [shadowOverlayStatus, setShadowOverlayStatus] =
+    useState<ShadowOverlayStatus>({ phase: "idle" });
+  const [mapFailure, setMapFailure] = useState<string | null>(null);
+
+  // This runs before paint on updates, so a frame from the previous time can
+  // never remain visible while the next worker generation is pending.
+  useLayoutEffect(() => {
+    const generation = shadowGenerationRef.current + 1;
+    shadowGenerationRef.current = generation;
+    const map = mapRef.current;
+    if (map) concealGroundShadowOverlay(map);
+    // This state transition is deliberately synchronous: React flushes layout
+    // effects before paint, keeping the visible status in step with the
+    // already-concealed MapLibre canvas layer.
+    setShadowOverlayStatus(
+      departureDate
+        ? { phase: "loading", generation, dateEpochMs: departureDate.getTime() }
+        : { phase: "idle" },
+    );
+  }, [area, departureDate, routes]);
 
   useEffect(() => {
     pickingRef.current = picking;
@@ -239,6 +336,10 @@ export function RouteMap({
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
+    setMapFailure(null);
+    // Vinext cannot infer MapLibre's default sibling worker at runtime. Giving
+    // Vite the worker entry explicitly emits a same-origin, hashed asset.
+    maplibregl.setWorkerUrl(mapLibreWorkerUrl);
     const localStyle: StyleSpecification = {
       version: 8,
       sources: {
@@ -335,12 +436,33 @@ export function RouteMap({
       bearing: -24,
       canvasContextAttributes: { antialias: true },
     });
+    let styleReady = false;
+    const handleLoad = () => {
+      styleReady = true;
+      setMapFailure(null);
+    };
+    const handleMapError = (event: maplibregl.ErrorEvent) => {
+      console.error("Unable to render the local 3D map.", event.error);
+      if (!styleReady) {
+        setMapFailure("The local 3D map could not start. Reload this page to retry.");
+      }
+    };
+    const loadTimer = window.setTimeout(() => {
+      if (!styleReady) {
+        setMapFailure("The local 3D map did not finish loading. Reload this page to retry.");
+      }
+    }, MAP_LOAD_TIMEOUT_MS);
+    map.on("load", handleLoad);
+    map.on("error", handleMapError);
     map.addControl(new maplibregl.NavigationControl({ showCompass: true, visualizePitch: true }), "top-right");
     map.on("click", (event) => {
       if (pickingRef.current) pickCallbackRef.current([event.lngLat.lng, event.lngLat.lat]);
     });
     mapRef.current = map;
     return () => {
+      window.clearTimeout(loadTimer);
+      map.off("load", handleLoad);
+      map.off("error", handleMapError);
       map.remove();
       mapRef.current = null;
     };
@@ -497,73 +619,116 @@ export function RouteMap({
     if (!map || !departureDate) return;
     let active = true;
     let pauseTimer: number | undefined;
+    let workerTimer: number | undefined;
     let removeWorkerListeners: (() => void) | undefined;
-    const generation = shadowGenerationRef.current + 1;
-    shadowGenerationRef.current = generation;
+    const generation = shadowGenerationRef.current;
     const dateEpochMs = departureDate.getTime();
+    concealGroundShadowOverlay(map);
 
-    const applyShadowFrame = (grid: Awaited<ReturnType<typeof loadHeightGrid>>, frame: GroundShadowFrame) => {
+    const markUnavailable = (reason: GroundShadowUnavailableReason) => {
+      if (
+        !active ||
+        shadowGenerationRef.current !== generation ||
+        mapRef.current !== map
+      ) return;
+      concealGroundShadowOverlay(map);
+      setSunPosition(null);
+      setShadowOverlayStatus({
+        phase: "unavailable",
+        generation,
+        dateEpochMs,
+        message: groundShadowUnavailableMessage(reason, SHADOW_WORKER_TIMEOUT_MS),
+      });
+    };
+
+    const applyShadowFrame = (
+      grid: Awaited<ReturnType<typeof loadHeightGrid>>,
+      frame: GroundShadowFrame,
+      renderMode: "worker" | "fallback",
+    ) => {
       if (
         !active ||
         shadowGenerationRef.current !== generation ||
         mapRef.current !== map
       ) return;
 
-      const canvas = shadowCanvasRef.current ?? document.createElement("canvas");
-      shadowCanvasRef.current = canvas;
-      if (canvas.width !== frame.width || canvas.height !== frame.height) {
-        canvas.width = frame.width;
-        canvas.height = frame.height;
-      }
-      const context = canvas.getContext("2d");
-      if (!context) return;
-      const imagePixels = frame.pixels as Uint8ClampedArray<ArrayBuffer>;
-      context.putImageData(new ImageData(imagePixels, frame.width, frame.height), 0, 0);
+      try {
+        const canvas = shadowCanvasRef.current ?? document.createElement("canvas");
+        shadowCanvasRef.current = canvas;
+        if (canvas.width !== frame.width || canvas.height !== frame.height) {
+          canvas.width = frame.width;
+          canvas.height = frame.height;
+        }
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("The ground-shadow canvas is unavailable.");
+        const imagePixels = frame.pixels as Uint8ClampedArray<ArrayBuffer>;
+        context.putImageData(new ImageData(imagePixels, frame.width, frame.height), 0, 0);
 
-      const coordinates = heightGridCanvasCoordinates(grid);
-      const source = map.getSource(SHADOW_SOURCE_ID) as CanvasSource | undefined;
-      if (source) {
-        source.setCoordinates(coordinates);
-        source.play();
-      } else {
-        map.addSource(SHADOW_SOURCE_ID, {
-          type: "canvas",
-          canvas,
-          animate: true,
-          coordinates,
-        });
-        map.addLayer(
-          {
-            id: SHADOW_LAYER_ID,
-            type: "raster",
-            source: SHADOW_SOURCE_ID,
-            paint: {
-              "raster-opacity": frame.isDaylight ? 0.88 : 0.72,
-              "raster-fade-duration": 0,
-              "raster-resampling": "linear",
+        const coordinates = heightGridCanvasCoordinates(grid);
+        const source = map.getSource(SHADOW_SOURCE_ID) as CanvasSource | undefined;
+        if (source) {
+          source.setCoordinates(coordinates);
+          source.play();
+        } else {
+          map.addSource(SHADOW_SOURCE_ID, {
+            type: "canvas",
+            canvas,
+            animate: true,
+            coordinates,
+          });
+          map.addLayer(
+            {
+              id: SHADOW_LAYER_ID,
+              type: "raster",
+              source: SHADOW_SOURCE_ID,
+              paint: {
+                "raster-opacity": frame.isDaylight ? 0.88 : 0.72,
+                "raster-fade-duration": 0,
+                "raster-resampling": "nearest",
+              },
             },
-          },
-          "buildings",
+            "buildings",
+          );
+        }
+        map.setPaintProperty(
+          SHADOW_LAYER_ID,
+          "raster-opacity",
+          frame.isDaylight ? 0.88 : 0.72,
         );
+        map.setLight({
+          anchor: "map",
+          color: frame.isDaylight ? "#fff4d4" : "#b9c9d6",
+          intensity: frame.isDaylight ? 0.58 : 0.16,
+          position: [1.5, frame.azimuthDeg, Math.max(0, 90 - frame.altitudeDeg)],
+        });
+        setSunPosition({
+          dateEpochMs,
+          isDaylight: frame.isDaylight,
+          azimuthDeg: frame.azimuthDeg,
+          altitudeDeg: frame.altitudeDeg,
+          lowSun: frame.lowSun,
+          certainShadowPercent: frame.certainShadowPercent,
+          possibleShadowPercent: frame.possibleShadowPercent,
+          unknownPercent: frame.unknownPercent,
+          searchLimitedPercent: frame.searchLimitedPercent,
+          raySearchLimitMetres: frame.raySearchLimitMetres,
+          lowSunThresholdDegrees: frame.lowSunThresholdDegrees,
+        });
+        setShadowOverlayStatus({
+          phase: "ready",
+          generation,
+          dateEpochMs,
+          renderMode,
+        });
+        map.triggerRepaint();
+        if (pauseTimer) window.clearTimeout(pauseTimer);
+        pauseTimer = window.setTimeout(() => {
+          (map.getSource(SHADOW_SOURCE_ID) as CanvasSource | undefined)?.pause();
+        }, 100);
+      } catch (error) {
+        console.error("Unable to apply the current ground-shadow frame.", error);
+        markUnavailable("render");
       }
-      map.setPaintProperty(SHADOW_LAYER_ID, "raster-opacity", frame.isDaylight ? 0.88 : 0.72);
-      map.setLight({
-        anchor: "map",
-        color: frame.isDaylight ? "#fff4d4" : "#b9c9d6",
-        intensity: frame.isDaylight ? 0.58 : 0.16,
-        position: [1.5, frame.azimuthDeg, Math.max(0, 90 - frame.altitudeDeg)],
-      });
-      setSunPosition({
-        dateEpochMs,
-        isDaylight: frame.isDaylight,
-        azimuthDeg: frame.azimuthDeg,
-        altitudeDeg: frame.altitudeDeg,
-      });
-      map.triggerRepaint();
-      if (pauseTimer) window.clearTimeout(pauseTimer);
-      pauseTimer = window.setTimeout(() => {
-        (map.getSource(SHADOW_SOURCE_ID) as CanvasSource | undefined)?.pause();
-      }, 100);
     };
 
     const updateShadows = async () => {
@@ -572,6 +737,7 @@ export function RouteMap({
         grid = await loadHeightGrid(area.id);
       } catch (error) {
         console.error("Unable to load ground-shadow coverage.", error);
+        markUnavailable("height-data");
         return;
       }
       if (
@@ -584,30 +750,43 @@ export function RouteMap({
         (area.bbox[0] + area.bbox[2]) / 2,
         (area.bbox[1] + area.bbox[3]) / 2,
       ];
-      const renderSynchronously = () => {
-        if (!active || shadowGenerationRef.current !== generation) return;
+      let fallbackAttempted = false;
+      const renderFallback = (workerError?: unknown) => {
+        if (
+          fallbackAttempted ||
+          !active ||
+          shadowGenerationRef.current !== generation ||
+          mapRef.current !== map
+        ) return;
+        fallbackAttempted = true;
+        if (workerError !== undefined) {
+          console.error(
+            "The background ground-shadow renderer failed; using the on-device fallback.",
+            workerError,
+          );
+        }
         try {
-          applyShadowFrame(grid, renderGroundShadowFrame(grid, departureDate, centre));
+          const frame = renderGroundShadowFrame(grid, departureDate, centre);
+          applyShadowFrame(grid, frame, "fallback");
         } catch (error) {
-          console.error("Unable to render ground shadows.", error);
+          console.error("Unable to render the fallback ground-shadow frame.", error);
+          markUnavailable("render");
         }
       };
-
-      if (shadowWorkerUnavailableRef.current || typeof Worker === "undefined") {
-        renderSynchronously();
+      if (typeof Worker === "undefined") {
+        renderFallback();
         return;
       }
 
       let worker = shadowWorkerRef.current;
       if (!worker) {
         try {
-          worker = new Worker(new URL("../workers/shadow-worker.ts", import.meta.url), {
+          worker = new Worker(shadowWorkerUrl, {
             type: "module",
           });
           shadowWorkerRef.current = worker;
-        } catch {
-          shadowWorkerUnavailableRef.current = true;
-          renderSynchronously();
+        } catch (error) {
+          renderFallback(error);
           return;
         }
       }
@@ -615,16 +794,25 @@ export function RouteMap({
 
       let settled = false;
       const removeListeners = () => {
+        if (workerTimer) {
+          window.clearTimeout(workerTimer);
+          workerTimer = undefined;
+        }
         workerInstance.removeEventListener("message", handleMessage);
         workerInstance.removeEventListener("error", handleError);
         workerInstance.removeEventListener("messageerror", handleMessageError);
         if (removeWorkerListeners === removeListeners) removeWorkerListeners = undefined;
       };
-      const fallback = () => {
+      const failWorker = (
+        reason: GroundShadowUnavailableReason,
+        error?: unknown,
+      ) => {
         if (settled) return;
         settled = true;
         removeListeners();
-        shadowWorkerUnavailableRef.current = true;
+        if (error !== undefined) {
+          console.error("The ground-shadow worker failed.", error);
+        }
         if (shadowWorkerRef.current === workerInstance) {
           workerInstance.terminate();
           shadowWorkerRef.current = null;
@@ -632,23 +820,27 @@ export function RouteMap({
         if (shadowWorkerGridRef.current?.worker === workerInstance) {
           shadowWorkerGridRef.current = null;
         }
-        renderSynchronously();
+        renderFallback(error ?? groundShadowUnavailableMessage(reason, SHADOW_WORKER_TIMEOUT_MS));
       };
       const handleMessage = (event: MessageEvent<unknown>) => {
+        if (!isShadowRenderResponse(event.data)) {
+          failWorker("worker-message");
+          return;
+        }
         if (!isShadowRenderResponseForGeneration(event.data, generation)) return;
         if (event.data.type === SHADOW_RENDER_FAILURE) {
-          fallback();
+          failWorker("worker-failure", event.data.error);
           return;
         }
         settled = true;
         removeListeners();
-        applyShadowFrame(grid, groundShadowFrameFromResponse(event.data));
+        applyShadowFrame(grid, groundShadowFrameFromResponse(event.data), "worker");
       };
       const handleError = (event: ErrorEvent) => {
         event.preventDefault();
-        fallback();
+        failWorker("worker-failure", event.error ?? event.message);
       };
-      const handleMessageError = () => fallback();
+      const handleMessageError = () => failWorker("worker-message");
 
       removeWorkerListeners = removeListeners;
       workerInstance.addEventListener("message", handleMessage);
@@ -666,8 +858,8 @@ export function RouteMap({
         const initialisation = createShadowGridInitialisation(version, grid);
         try {
           workerInstance.postMessage(initialisation.message, initialisation.transfer);
-        } catch {
-          fallback();
+        } catch (error) {
+          failWorker("worker-failure", error);
           return;
         }
         workerGrid = { worker: workerInstance, areaId: area.id, grid, version };
@@ -681,8 +873,12 @@ export function RouteMap({
       );
       try {
         workerInstance.postMessage(message);
-      } catch {
-        fallback();
+        workerTimer = window.setTimeout(
+          () => failWorker("worker-timeout"),
+          SHADOW_WORKER_TIMEOUT_MS,
+        );
+      } catch (error) {
+        failWorker("worker-failure", error);
       }
     };
 
@@ -692,6 +888,7 @@ export function RouteMap({
       active = false;
       removeWorkerListeners?.();
       if (pauseTimer) window.clearTimeout(pauseTimer);
+      if (workerTimer) window.clearTimeout(workerTimer);
       map.off("load", updateShadows);
     };
   // A fresh route set is also the explicit retry signal after a transient
@@ -943,12 +1140,47 @@ export function RouteMap({
     if (canvas) canvas.style.cursor = picking ? "crosshair" : "";
   }, [picking]);
 
-  const currentSunPosition = departureDate && sunPosition?.dateEpochMs === departureDate.getTime()
-    ? sunPosition
-    : null;
+  const currentShadowOverlayStatus =
+    departureDate &&
+    shadowOverlayStatus.phase !== "idle" &&
+    shadowOverlayStatus.dateEpochMs === departureDate.getTime()
+      ? shadowOverlayStatus
+      : null;
+  const currentSunPosition =
+    currentShadowOverlayStatus?.phase === "ready" &&
+    sunPosition?.dateEpochMs === currentShadowOverlayStatus.dateEpochMs
+      ? sunPosition
+      : null;
   const sunStatus = currentSunPosition
     ? `Sun ${sunDirection(currentSunPosition.azimuthDeg)} (${formatAngle(currentSunPosition.azimuthDeg)}) · altitude ${formatAngle(currentSunPosition.altitudeDeg)}${currentSunPosition.isDaylight ? "" : " · below horizon"}`
     : "Calculating sun position";
+  const coverageStatus = currentSunPosition
+    ? groundShadowCoverageStatus(currentSunPosition)
+    : "Calculating model bounds";
+  const limitWarning = currentSunPosition
+    ? groundShadowLimitWarning(currentSunPosition)
+    : null;
+  const shadowUnavailableMessage =
+    currentShadowOverlayStatus?.phase === "unavailable"
+      ? currentShadowOverlayStatus.message
+      : null;
+  const shadowIsLoading = Boolean(
+    !mapFailure &&
+      departureDate &&
+      (!currentShadowOverlayStatus || currentShadowOverlayStatus.phase === "loading"),
+  );
+  const usedFallbackRenderer =
+    currentShadowOverlayStatus?.phase === "ready" &&
+    currentShadowOverlayStatus.renderMode === "fallback";
+  const mapStatus = mapFailure
+    ? mapFailure
+    : shadowUnavailableMessage
+      ? shadowUnavailableMessage
+      : shadowIsLoading
+        ? `Updating 3D ground shade for ${timeLabel}. The previous overlay is hidden.`
+        : currentSunPosition
+          ? `3D modelled ground shade · ${timeLabel} · ${sunStatus} · ${coverageStatus}${usedFallbackRenderer ? " · rendered on this device without the background worker" : ""}`
+          : "Choose a departure time to display modelled 3D ground shade. Routes remain available.";
   const pickingLabel = picking === "origin" ? "start" : "destination";
 
   const chooseMapCentre = () => {
@@ -966,10 +1198,14 @@ export function RouteMap({
         ref={containerRef}
         className="route-map"
         role="region"
-        aria-label={`3D shadow map of ${area.name} for ${timeLabel}. ${picking ? `Choose the ${pickingLabel} point. Click or tap a point, or use the arrow keys to position the map centre and then use the map-centre button.` : "Routes are also listed below the map."}`}
+        aria-label={`3D modelled ground-shade map of ${area.name} for ${timeLabel}. ${picking ? `Choose the ${pickingLabel} point. Click or tap a point, or use the arrow keys to position the map centre and then use the map-centre button.` : "Routes are also listed below the map."}`}
       />
       {picking ? <span className="map-pick-centre" aria-hidden="true" /> : null}
-      <div className={`map-status${picking ? " is-picking" : ""}`} aria-live={picking ? "polite" : "off"}>
+      <div
+        className={`map-status${picking ? " is-picking" : ""}${mapFailure || shadowUnavailableMessage ? " is-error" : ""}${shadowIsLoading ? " is-loading" : ""}${currentSunPosition?.isDaylight && !picking && !mapFailure ? " has-shadow-key" : ""}`}
+        aria-busy={!picking && shadowIsLoading}
+        aria-live={picking || mapFailure || shadowUnavailableMessage ? "polite" : "off"}
+      >
         {picking ? (
           <>
             <span>
@@ -980,7 +1216,29 @@ export function RouteMap({
               Use map centre for {pickingLabel}
             </button>
           </>
-        ) : `3D building shadows · ${timeLabel} · ${sunStatus}`}
+        ) : (
+          <>
+            <span>{mapStatus}</span>
+            {currentSunPosition?.isDaylight ? (
+              <span className="ground-shadow-key" aria-label="Ground-shade overlay key">
+                {GROUND_SHADOW_LEGEND.map((item) => (
+                  <span key={item.channel}>
+                    <i
+                      aria-hidden="true"
+                      style={{
+                        backgroundColor: `rgba(${item.rgba[0]}, ${item.rgba[1]}, ${item.rgba[2]}, ${item.rgba[3] / 255})`,
+                      }}
+                    />
+                    {item.label}
+                  </span>
+                ))}
+              </span>
+            ) : null}
+            {limitWarning ? (
+              <strong>{limitWarning}</strong>
+            ) : null}
+          </>
+        )}
       </div>
     </div>
   );

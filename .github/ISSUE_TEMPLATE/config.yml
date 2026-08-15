@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Support guidance
+    url: https://github.com/MasteraSnackin/shade-route/blob/main/SUPPORT.md
+    about: Check support boundaries and the information needed for a useful report.
+  - name: Security policy
+    url: https://github.com/MasteraSnackin/shade-route/security/policy
+    about: Do not put vulnerability details, credentials or personal data in a public issue.

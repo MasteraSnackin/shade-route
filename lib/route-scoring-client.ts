@@ -61,6 +61,15 @@ interface PendingRequest<T extends TaskResult = TaskResult> {
   resolve: (value: T) => void;
   reject: (reason: unknown) => void;
   runFallback: () => T;
+  timerId: ReturnType<typeof setTimeout> | null;
+  acceptsWorkerResponse: boolean;
+}
+
+export const DEFAULT_SCORING_REQUEST_TIMEOUT_MS = 15_000;
+const MAX_SCORING_REQUEST_TIMEOUT_MS = 60_000;
+
+export interface RouteScoringClientOptions {
+  requestTimeoutMs?: number;
 }
 
 export class RouteScoringCancelledError extends Error {
@@ -72,6 +81,13 @@ export class RouteScoringCancelledError extends Error {
 
 export function isRouteScoringCancelledError(error: unknown): error is RouteScoringCancelledError {
   return error instanceof RouteScoringCancelledError;
+}
+
+export class RouteScoringUnavailableError extends Error {
+  constructor() {
+    super("Route exposure calculation is unavailable.");
+    this.name = "RouteScoringUnavailableError";
+  }
 }
 
 function validDeparture(date: Date) {
@@ -112,18 +128,13 @@ function adviceSynchronously(input: RouteDepartureAdviceInput) {
   });
 }
 
-function defaultWorkerFactory(): WorkerLike {
-  return new Worker(new URL("../workers/scoring-worker.ts", import.meta.url), {
-    type: "module",
-  });
-}
-
 /**
  * Owns one long-lived worker and one copied grid. Requests contain routes and
  * times only; switching grids cancels work tied to the previous coverage.
  */
 export class RouteScoringClient {
   private readonly workerFactory: () => WorkerLike;
+  private readonly requestTimeoutMs: number;
   private worker: WorkerLike | null = null;
   private workerUnavailable = false;
   private activeGrid: { areaId: string; grid: HeightGrid; version: number } | null = null;
@@ -131,8 +142,19 @@ export class RouteScoringClient {
   private nextGridVersion = 0;
   private readonly pending = new Map<ScoringTask, PendingRequest>();
 
-  constructor(workerFactory: () => WorkerLike = defaultWorkerFactory) {
+  constructor(
+    workerFactory: () => WorkerLike,
+    options: RouteScoringClientOptions = {},
+  ) {
     this.workerFactory = workerFactory;
+    this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_SCORING_REQUEST_TIMEOUT_MS;
+    if (
+      !Number.isSafeInteger(this.requestTimeoutMs) ||
+      this.requestTimeoutMs < 1 ||
+      this.requestTimeoutMs > MAX_SCORING_REQUEST_TIMEOUT_MS
+    ) {
+      throw new RangeError("requestTimeoutMs must be between 1 and 60,000 milliseconds.");
+    }
   }
 
   scoreRoutes(input: RouteScheduleScoringInput): Promise<LabelledRasterScore[]> {
@@ -207,13 +229,14 @@ export class RouteScoringClient {
     if (this.workerUnavailable) return null;
     if (!this.worker) {
       try {
-        this.worker = this.workerFactory();
-        this.worker.addEventListener("message", this.handleMessage);
-        this.worker.addEventListener("error", this.handleError);
-        this.worker.addEventListener("messageerror", this.handleMessageError);
+        const worker = this.workerFactory();
+        this.worker = worker;
+        worker.addEventListener("message", this.handleMessage);
+        worker.addEventListener("error", this.handleError);
+        worker.addEventListener("messageerror", this.handleMessageError);
       } catch {
         this.workerUnavailable = true;
-        this.worker = null;
+        this.detachWorker();
         return null;
       }
     }
@@ -245,19 +268,29 @@ export class RouteScoringClient {
     worker: WorkerLike | null,
   ): Promise<T> {
     this.cancel(task);
+    // Cancelling the replaced request can itself expose a broken Worker shim.
+    // Never retain or post to the caller's stale reference after that cleanup.
+    const activeWorker = worker === this.worker ? worker : null;
     return new Promise<T>((resolve, reject) => {
-      this.pending.set(task, {
+      const pending: PendingRequest = {
         generation,
         resolve: resolve as (value: TaskResult) => void,
         reject,
         runFallback,
-      });
-      if (!worker) {
+        timerId: null,
+        acceptsWorkerResponse: Boolean(activeWorker),
+      };
+      this.pending.set(task, pending);
+      if (!activeWorker) {
         this.scheduleFallback(task, generation);
         return;
       }
+      pending.timerId = globalThis.setTimeout(
+        () => this.handleWorkerTimeout(task, generation),
+        this.requestTimeoutMs,
+      );
       try {
-        worker.postMessage(request);
+        activeWorker.postMessage(request);
       } catch {
         this.handleWorkerFailure();
       }
@@ -265,26 +298,37 @@ export class RouteScoringClient {
   }
 
   private scheduleFallback(task: ScoringTask, generation: number) {
-    globalThis.setTimeout(() => {
-      const pending = this.pending.get(task);
-      if (!pending || pending.generation !== generation) return;
+    const pending = this.pending.get(task);
+    if (!pending || pending.generation !== generation) return;
+    pending.acceptsWorkerResponse = false;
+    this.clearPendingTimer(pending);
+    pending.timerId = globalThis.setTimeout(() => {
+      pending.timerId = null;
+      if (this.pending.get(task) !== pending) return;
       try {
         const result = pending.runFallback();
         if (this.pending.get(task) !== pending) return;
         this.pending.delete(task);
         pending.resolve(result);
-      } catch (error) {
+      } catch {
         if (this.pending.get(task) !== pending) return;
         this.pending.delete(task);
-        pending.reject(error);
+        pending.reject(new RouteScoringUnavailableError());
       }
     }, 0);
+  }
+
+  private clearPendingTimer(pending: PendingRequest) {
+    if (pending.timerId === null) return;
+    globalThis.clearTimeout(pending.timerId);
+    pending.timerId = null;
   }
 
   private cancel(task: ScoringTask) {
     const pending = this.pending.get(task);
     if (!pending) return;
     this.pending.delete(task);
+    this.clearPendingTimer(pending);
     pending.reject(new RouteScoringCancelledError());
     try {
       this.worker?.postMessage({
@@ -304,10 +348,15 @@ export class RouteScoringClient {
 
   private settleWorkerResponse(response: ScoringWorkerResponse) {
     const pending = this.pending.get(response.task);
-    if (!pending || pending.generation !== response.generation) return;
+    if (
+      !pending ||
+      pending.generation !== response.generation ||
+      !pending.acceptsWorkerResponse
+    ) return;
     this.pending.delete(response.task);
+    this.clearPendingTimer(pending);
     if (response.type === SCORING_FAILURE) {
-      pending.reject(new Error(response.error));
+      pending.reject(new RouteScoringUnavailableError());
       return;
     }
     if (response.type === SCHEDULE_SCORE_SUCCESS) {
@@ -324,23 +373,54 @@ export class RouteScoringClient {
 
   private readonly handleMessageError = () => this.handleWorkerFailure();
 
-  private handleWorkerFailure() {
-    this.workerUnavailable = true;
+  private handleWorkerTimeout(task: ScoringTask, generation: number) {
+    const timedOut = this.pending.get(task);
+    if (!timedOut || timedOut.generation !== generation) return;
+
+    // A worker that misses a request deadline cannot be trusted for another
+    // result stream. Retire it, settle every request through the local model,
+    // and construct a fresh worker lazily for the next request.
+    for (const [pendingTask, pending] of this.pending) {
+      this.scheduleFallback(pendingTask, pending.generation);
+    }
+    // Mark every pending stream as fallback-only before cleanup. A non-standard
+    // Worker shim may invoke a retained listener re-entrantly while detaching.
     this.detachWorker();
     this.activeGrid = null;
+  }
+
+  private handleWorkerFailure() {
+    this.workerUnavailable = true;
     for (const [task, pending] of this.pending) {
       this.scheduleFallback(task, pending.generation);
     }
+    this.detachWorker();
+    this.activeGrid = null;
   }
 
   private detachWorker() {
-    if (!this.worker) return;
-    this.worker.removeEventListener("message", this.handleMessage);
-    this.worker.removeEventListener("error", this.handleError);
-    this.worker.removeEventListener("messageerror", this.handleMessageError);
-    this.worker.terminate();
+    const worker = this.worker;
+    if (!worker) return;
     this.worker = null;
+    try {
+      worker.removeEventListener("message", this.handleMessage);
+    } catch {
+      // Continue retirement even if a non-standard Worker shim rejects cleanup.
+    }
+    try {
+      worker.removeEventListener("error", this.handleError);
+    } catch {
+      // Continue retirement even if a non-standard Worker shim rejects cleanup.
+    }
+    try {
+      worker.removeEventListener("messageerror", this.handleMessageError);
+    } catch {
+      // Continue retirement even if a non-standard Worker shim rejects cleanup.
+    }
+    try {
+      worker.terminate();
+    } catch {
+      // The client is already detached; fallback work must still be allowed to settle.
+    }
   }
 }
-
-export const routeScoringClient = new RouteScoringClient();

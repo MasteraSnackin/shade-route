@@ -453,9 +453,12 @@ main {
 
 .local-place-search input[type="search"] {
   min-height: 44px;
-  padding: 0 7px;
-  border-color: transparent;
-  background: transparent;
+  width: 100%;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
   font-size: 13px;
   font-weight: 650;
   text-overflow: ellipsis;
@@ -463,8 +466,28 @@ main {
 
 .local-place-search input[type="search"]:hover,
 .local-place-search input[type="search"]:focus {
-  border-color: var(--line-strong);
+  border-color: var(--green);
   background: white;
+}
+
+.local-place-search input[type="search"]::placeholder {
+  color: var(--ink-soft);
+  font-weight: 500;
+  opacity: 1;
+}
+
+.local-place-hint {
+  display: block;
+  margin-top: 5px;
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.local-place-hint.is-warning {
+  color: #7a3d13;
+  font-weight: 650;
 }
 
 .local-place-popup {
@@ -1028,6 +1051,45 @@ select:hover {
   gap: 8px;
   font-weight: 600;
   line-height: 1.4;
+}
+
+.map-status.is-error {
+  border-color: #c98331;
+  background: rgba(255, 244, 224, 0.97);
+  color: #6f4514;
+}
+
+.map-status.is-loading {
+  border-color: rgba(7, 95, 86, 0.38);
+  background: rgba(244, 250, 247, 0.97);
+  color: var(--green-dark);
+}
+
+.map-status.has-shadow-key {
+  display: grid;
+  gap: 6px;
+}
+
+.ground-shadow-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.ground-shadow-key > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.ground-shadow-key i {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(24, 49, 42, 0.3);
+  border-radius: 2px;
 }
 
 .map-status.is-picking button {
@@ -2464,6 +2526,47 @@ select:hover {
   color: var(--ink-soft);
   font-size: 11px;
   line-height: 1.5;
+}
+
+.calibration-workflow {
+  margin-top: 20px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.calibration-workflow > summary {
+  min-height: 52px;
+  padding: 14px 18px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  cursor: pointer;
+}
+
+.calibration-workflow > summary span {
+  color: var(--green);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.calibration-workflow > summary strong {
+  font-size: 13px;
+}
+
+.calibration-workflow > p {
+  margin: 0;
+  padding: 0 18px 16px;
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.calibration-workflow > section {
+  margin: 0 12px 12px;
 }
 
 .limitations {

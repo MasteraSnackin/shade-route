@@ -39,7 +39,8 @@ test("map presents time-controlled 3D buildings and moving ground shadows", asyn
   ]);
 
   assert.match(mapSource, /type: "fill-extrusion"/);
-  assert.match(mapSource, /renderGroundShadowFrame/);
+  assert.match(mapSource, /groundShadowFrameFromResponse/);
+  assert.match(mapSource, /concealGroundShadowOverlay/);
   assert.match(mapSource, /type: "canvas"/);
   assert.match(mapSource, /map\.setLight/);
   assert.match(mapSource, /\[area, departureDate, routes\]/);
@@ -125,7 +126,7 @@ test("audience changes preserve route preferences and walking guidance is explic
   assert.match(source, /<ShiftExposureTimeline/);
   assert.match(source, /const resetScheduledPreview[\s\S]+clearDirectionInspection\(\)/);
   assert.match(source, /Daylight coverage not applicable/);
-  assert.match(source, /Preview walking steps/);
+  assert.match(source, /Open field route reference/);
   assert.match(source, /Pre-journey steps for/);
   assert.doesNotMatch(source, />Walk this route</);
 });
@@ -152,6 +153,45 @@ test("pending exposure never reuses scores from a different planner state", asyn
   assert.doesNotMatch(source, /Rank \{rank \+ 1\}/);
 });
 
+test("custom routes remain bound to the access preference used for their request", async () => {
+  const source = await readFile(new URL("../components/ShadeRouteApp.tsx", import.meta.url), "utf8");
+
+  assert.match(
+    source,
+    /const changeAvoidSteps[\s\S]+invalidateScores\(\);[\s\S]+if \(customJourney\)[\s\S]+setRoutes\(\[\]\);[\s\S]+Compare routes again to request matching alternatives/,
+  );
+  assert.match(
+    source,
+    /const invalidateScores[\s\S]+liveRouteUiGenerationRef\.current \+= 1;[\s\S]+liveRouteClient\.cancel\(\)/,
+  );
+  assert.match(source, /setRoutes\(\[\]\);[\s\S]+setSelectedRouteId\(null\)/);
+  assert.match(
+    source,
+    /const requestedAccessPreference = avoidSteps \? "avoid-known-steps" : "standard";[\s\S]+accessPreference: requestedAccessPreference/,
+  );
+  assert.match(
+    source,
+    /requestedAccessPreference === "avoid-known-steps"[\s\S]+Known steps were strongly penalised/,
+  );
+  assert.match(
+    source,
+    /onChange=\{\(event\) => changeAvoidSteps\(event\.target\.checked\)\}/,
+  );
+  assert.doesNotMatch(
+    source,
+    /aria-label="Avoid known stairs and escalators"[\s\S]{0,180}onChange=\{\(event\) => setAvoidSteps/,
+  );
+  assert.match(
+    source,
+    /const supportedAlternatives[\s\S]+sensitivitySupportsLowerSun\(fastestSuitable, score\)[\s\S]+sensitivityEstablishesLowestSun\(candidate, supportedAlternatives\)/,
+  );
+  assert.match(
+    source,
+    /\[area, routes, departure, profile, effectiveJourneyCount, repeatEveryMinutes, walkingPace, avoidSteps, calculateScores\]/,
+  );
+  assert.match(source, /fastest materially lower-sun option[\s\S]+avoids known stair and escalator/);
+});
+
 test("offline preparation and decision evidence are tied to the selected current pilot result", async () => {
   const source = await readFile(new URL("../components/ShadeRouteApp.tsx", import.meta.url), "utf8");
 
@@ -164,5 +204,5 @@ test("offline preparation and decision evidence are tied to the selected current
   assert.match(source, /<DecisionEvidenceDownload/);
   assert.match(source, /selectedScore,/);
   assert.match(source, /journeyCount: effectiveJourneyCount/);
-  assert.match(source, /Field checks<\/dt><dd>0 recorded — calibration pending/);
+  assert.match(source, /Published field checks<\/dt><dd>0 — calibration pending/);
 });

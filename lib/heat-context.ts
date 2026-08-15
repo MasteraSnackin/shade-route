@@ -24,6 +24,16 @@ export interface HeatContextAvailable {
   source: typeof SOURCE;
 }
 
+export interface HeatContextNoActiveAlert {
+  status: "no_active_alert";
+  region: typeof REGION;
+  regionType: typeof REGION_TYPE;
+  metric: typeof UKHSA_HEAT_METRIC;
+  message: string;
+  stale: boolean;
+  source: typeof SOURCE;
+}
+
 export interface HeatContextUnavailable {
   status: "unavailable";
   region: typeof REGION;
@@ -32,7 +42,8 @@ export interface HeatContextUnavailable {
   source: typeof SOURCE;
 }
 
-export type HeatContextData = HeatContextAvailable | HeatContextUnavailable;
+export type HeatContextCacheable = HeatContextAvailable | HeatContextNoActiveAlert;
+export type HeatContextData = HeatContextCacheable | HeatContextUnavailable;
 
 function objectValue(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -54,6 +65,18 @@ function recordsFromPayload(payload: unknown): unknown[] {
   // A future single-record response is safe to consider because every field is
   // still checked below against the requested metric and London geography.
   return [root];
+}
+
+function isDocumentedEmptyPage(payload: unknown) {
+  const root = objectValue(payload);
+  return Boolean(
+    root &&
+    root.count === 0 &&
+    root.next === null &&
+    root.previous === null &&
+    Array.isArray(root.results) &&
+    root.results.length === 0
+  );
 }
 
 function field(record: Record<string, unknown>, names: string[]) {
@@ -117,7 +140,9 @@ function parseRecord(recordValue: unknown): HeatContextAvailable | null {
  * Parses the documented UKHSA paginated response and narrowly tolerates the
  * array/data wrappers and camel-case fields a beta API may migrate to.
  */
-export function parseUkhsaHeatContext(payload: unknown): HeatContextAvailable | null {
+export function parseUkhsaHeatContext(payload: unknown): HeatContextCacheable | null {
+  if (isDocumentedEmptyPage(payload)) return noActiveHeatContext();
+
   let latest: HeatContextAvailable | null = null;
 
   for (const record of recordsFromPayload(payload)) {
@@ -128,7 +153,19 @@ export function parseUkhsaHeatContext(payload: unknown): HeatContextAvailable | 
   return latest;
 }
 
-export function staleHeatContext(context: HeatContextAvailable): HeatContextAvailable {
+export function noActiveHeatContext(): HeatContextNoActiveAlert {
+  return {
+    status: "no_active_alert",
+    region: REGION,
+    regionType: REGION_TYPE,
+    metric: UKHSA_HEAT_METRIC,
+    message: "UKHSA returned no active London heat-health alert.",
+    stale: false,
+    source: SOURCE,
+  };
+}
+
+export function staleHeatContext<T extends HeatContextCacheable>(context: T): T {
   return { ...context, stale: true };
 }
 

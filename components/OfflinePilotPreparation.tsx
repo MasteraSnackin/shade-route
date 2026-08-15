@@ -1,9 +1,11 @@
 "use client";
 
+import mapLibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   buildOfflinePilotAssetList,
   buildOfflinePilotIntegrityManifest,
+  assessOfflinePilotStorage,
   createOfflineWorkerRemovalRequest,
   createOfflineWorkerPreparationRequest,
   createOfflineWorkerVerificationRequest,
@@ -11,6 +13,7 @@ import {
   OFFLINE_PILOT_PACK_VERSION,
   OFFLINE_PILOT_SERVICE_WORKER_URL,
   offlinePilotManifestId,
+  offlineWorkerResponseMatchesRequest,
   readVerifiedOfflinePilot,
   removeVerifiedOfflinePilot,
   writeVerifiedOfflinePilot,
@@ -54,7 +57,10 @@ const RESPONSE_TIMEOUT_MS = 180_000;
 function isLocalBuildAsset(value: string, origin: string) {
   try {
     const url = new URL(value, origin);
-    return url.origin === origin && url.pathname.startsWith("/_next/static/");
+    return url.origin === origin && (
+      url.pathname.startsWith("/_next/static/") ||
+      url.pathname.startsWith("/assets/")
+    );
   } catch {
     return false;
   }
@@ -85,6 +91,7 @@ export function currentOfflineRuntimeAssets() {
   return [
     ...documentAssets,
     ...observedBuildAssets,
+    new URL(mapLibreWorkerUrl, origin).toString(),
     new URL(scoringWorkerUrl, origin).toString(),
     new URL(shadowWorkerUrl, origin).toString(),
   ];
@@ -103,9 +110,13 @@ function sendWorkerRequest(worker: ServiceWorker, request: OfflineWorkerRequest)
       channel.port1.close();
       reject(new Error("Offline preparation did not finish. Try again on a stable connection."));
     }, RESPONSE_TIMEOUT_MS);
-    channel.port1.onmessage = (event: MessageEvent<OfflineWorkerResponse>) => {
+    channel.port1.onmessage = (event: MessageEvent<unknown>) => {
       window.clearTimeout(timeout);
       channel.port1.close();
+      if (!offlineWorkerResponseMatchesRequest(request, event.data)) {
+        reject(new Error("Offline support returned an unexpected response. Reload ShadeRoute before trying again."));
+        return;
+      }
       resolve(event.data);
     };
     worker.postMessage(request, [channel.port2]);
@@ -134,6 +145,10 @@ function approximatePackSize(areaId: OfflinePilotAreaId) {
   return (OFFLINE_PILOT_DATA_BYTES[areaId] / 1_000_000).toFixed(1);
 }
 
+function readableMegabytes(bytes: number) {
+  return (bytes / 1_000_000).toFixed(1);
+}
+
 function storageOrNull() {
   try {
     return window.localStorage;
@@ -156,6 +171,8 @@ export function OfflinePilotPreparation({
   });
   const [updateRegistration, setUpdateRegistration] = useState<ServiceWorkerRegistration | null>(null);
   const statusChangeRef = useRef(onStatusChange);
+  const mountedRef = useRef(true);
+  const operationInProgressRef = useRef(false);
   const browserOrigin = typeof window === "undefined"
     ? "https://shaderoute.invalid"
     : window.location.origin;
@@ -167,8 +184,16 @@ export function OfflinePilotPreparation({
   const manifestId = useMemo(() => offlinePilotManifestId(assets), [assets]);
 
   const publishStatus = useCallback((next: OfflinePilotPreparationStatus) => {
+    if (!mountedRef.current) return;
     setStatus(next);
     statusChangeRef.current?.(next);
+  }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -266,12 +291,40 @@ export function OfflinePilotPreparation({
   }, [areaId, assets, manifestId, publishStatus, trackWaitingUpdate]);
 
   const prepare = async () => {
-    if (!("serviceWorker" in navigator) || !("caches" in window)) return;
+    if (
+      operationInProgressRef.current ||
+      !("serviceWorker" in navigator) ||
+      !("caches" in window)
+    ) return;
+    if (navigator.onLine === false) {
+      publishStatus({
+        phase: status.record ? "stale" : "failed",
+        record: status.record,
+        message: "This device reports that it is offline. Reconnect before downloading and verifying the pilot pack.",
+      });
+      return;
+    }
+    operationInProgressRef.current = true;
     const previousRecord = status.record;
     publishStatus({
       phase: "preparing",
       record: previousRecord,
-      message: `Downloading and checking the ${areaName} pilot pack…`,
+      message: `Checking browser storage before downloading the ${areaName} pilot pack…`,
+    });
+    let storageWarning = "";
+    try {
+      const estimate = await navigator.storage?.estimate?.();
+      const storage = assessOfflinePilotStorage(areaId, estimate);
+      if (storage.status === "low" && storage.availableBytes !== null) {
+        storageWarning = ` Browser storage reports about ${readableMegabytes(storage.availableBytes)} MB free, below the selected pilot data size of ${readableMegabytes(storage.requiredDataBytes)} MB; preparation may fail or older site data may be evicted.`;
+      }
+    } catch {
+      // Storage estimates are optional and never replace worker verification.
+    }
+    publishStatus({
+      phase: "preparing",
+      record: previousRecord,
+      message: `Downloading and checking the ${areaName} pilot pack…${storageWarning}`,
     });
     try {
       const integrityManifest = await buildOfflinePilotIntegrityManifest(
@@ -316,6 +369,8 @@ export function OfflinePilotPreparation({
           ? `${message} The earlier recorded pack has not been marked as current.`
           : message,
       });
+    } finally {
+      operationInProgressRef.current = false;
     }
   };
 
@@ -332,7 +387,12 @@ export function OfflinePilotPreparation({
   };
 
   const removePack = async () => {
-    if (!("serviceWorker" in navigator) || !("caches" in window)) return;
+    if (
+      operationInProgressRef.current ||
+      !("serviceWorker" in navigator) ||
+      !("caches" in window)
+    ) return;
+    operationInProgressRef.current = true;
     const previousRecord = status.record;
     publishStatus({
       phase: "removing",
@@ -370,6 +430,8 @@ export function OfflinePilotPreparation({
           ? error.message
           : "The selected offline pilot pack could not be removed.",
       });
+    } finally {
+      operationInProgressRef.current = false;
     }
   };
 
@@ -440,6 +502,30 @@ export function OfflinePilotPreparation({
           </button>
         )}
       </div>
+      {ready && (
+        <div className={styles.fieldHandoff} role="note">
+          <div>
+            <strong>Offline pack verified — continue to the field route reference</strong>
+            <p>
+              Choose a calculated route, review its warnings, then open the walking-step reference.
+              Verify again after browser storage is cleared or the application is updated.
+            </p>
+          </div>
+          <button
+            type="button"
+            className={styles.fieldAction}
+            onClick={() => {
+              const target = document.getElementById("results-title")?.closest("section");
+              if (target instanceof HTMLElement) {
+                target.focus({ preventScroll: true });
+                target.scrollIntoView({ behavior: "smooth", block: "start" });
+              }
+            }}
+          >
+            Continue to route selection
+          </button>
+        </div>
+      )}
     </section>
   );
 }

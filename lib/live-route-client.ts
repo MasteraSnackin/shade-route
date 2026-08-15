@@ -9,6 +9,7 @@ import {
   isRouteApiErrorCode,
   type RouteApiErrorCode,
 } from "./route-api-contract.ts";
+import type { RouteAccessPreference } from "./route-preferences.ts";
 
 type RoutePoint = Pick<NamedPoint, "lat" | "lon">;
 type FetchImplementation = (
@@ -20,6 +21,7 @@ export interface LiveRouteRequestInput {
   area: Pick<PilotArea, "id" | "bbox">;
   origin: RoutePoint;
   destination: RoutePoint;
+  accessPreference?: RouteAccessPreference;
 }
 
 export interface LiveRouteRequestResult {
@@ -309,6 +311,7 @@ export class LiveRouteRequestClient {
           body: JSON.stringify({
             origin: input.origin,
             destination: input.destination,
+            accessPreference: input.accessPreference ?? "standard",
           }),
         }),
         abortPromise,

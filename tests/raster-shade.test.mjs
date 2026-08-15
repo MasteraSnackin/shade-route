@@ -10,6 +10,8 @@ import {
   longitudeLatitudeToBng,
   scoreRouteAgainstGrid,
   scoreRouteSchedule,
+  sensitivityEstablishesLowestSun,
+  sensitivitySupportsLowerSun,
 } from "../lib/raster-shade.ts";
 import {
   formatLondonDateTime,
@@ -314,9 +316,9 @@ function scheduleScore(id, durationSeconds, estimatedDirectSunSeconds, range = [
 test("least-sun follows the displayed estimate and recommendation explains its detour guard", () => {
   const labelled = labelRouteScores(
     [
-      scheduleScore("fast", 600, 120, [0, 120]),
-      scheduleScore("balanced", 700, 50, [0, 500]),
-      scheduleScore("slow-lowest", 900, 10, [0, 10]),
+      scheduleScore("fast", 600, 120, [110, 130]),
+      scheduleScore("balanced", 700, 50, [40, 60]),
+      scheduleScore("slow-lowest", 900, 10, [0, 20]),
     ],
     "vulnerable",
   );
@@ -325,6 +327,93 @@ test("least-sun follows the displayed estimate and recommendation explains its d
   assert.ok(byId.balanced.labels.includes("recommended"));
   assert.ok(byId["slow-lowest"].labels.includes("least-sun"));
   assert.match(byId.balanced.recommendationReason, /displayed direct sun.+extra per journey.+detour limit/i);
+});
+
+test("overlapping sensitivity ranges cannot produce a lower-sun recommendation", () => {
+  const labelled = labelRouteScores(
+    [
+      scheduleScore("fast", 960, 660, [480, 840]),
+      scheduleScore("lower-point-estimate", 1_020, 600, [480, 720]),
+    ],
+    "vulnerable",
+  );
+  const byId = Object.fromEntries(labelled.map((score) => [score.routeId, score]));
+
+  assert.deepEqual(byId.fast.labels, ["recommended", "fastest"]);
+  assert.deepEqual(byId["lower-point-estimate"].labels, ["lowest-estimate"]);
+  assert.match(byId.fast.recommendationReason, /overlapping model sensitivity ranges/i);
+  assert.equal(sensitivitySupportsLowerSun(byId.fast, byId["lower-point-estimate"]), false);
+});
+
+test("an overlapping lowest estimate cannot hide a sensitivity-supported alternative", () => {
+  const labelled = labelRouteScores(
+    [
+      scheduleScore("fast", 600, 600, [500, 700]),
+      scheduleScore("overlapping-lowest", 650, 400, [300, 650]),
+      scheduleScore("bounded-lower", 660, 450, [410, 490]),
+    ],
+    "vulnerable",
+  );
+  const byId = Object.fromEntries(labelled.map((score) => [score.routeId, score]));
+
+  assert.deepEqual(byId.fast.labels, ["fastest"]);
+  assert.ok(byId["overlapping-lowest"].labels.includes("lowest-estimate"));
+  assert.deepEqual(byId["bounded-lower"].labels, ["recommended"]);
+  assert.match(byId["bounded-lower"].recommendationReason, /displayed direct sun.+extra per journey/i);
+});
+
+test("overlapping supported alternatives are ordered by time rather than point estimate", () => {
+  const labelled = labelRouteScores(
+    [
+      scheduleScore("fast", 600, 600, [500, 700]),
+      scheduleScore("shorter-supported", 650, 330, [260, 410]),
+      scheduleScore("lower-point-overlap", 680, 300, [220, 390]),
+    ],
+    "vulnerable",
+  );
+  const byId = Object.fromEntries(labelled.map((score) => [score.routeId, score]));
+
+  assert.ok(byId["shorter-supported"].labels.includes("recommended"));
+  assert.ok(!byId["lower-point-overlap"].labels.includes("recommended"));
+  assert.match(byId["shorter-supported"].recommendationReason, /ranges overlap.+fastest option/i);
+});
+
+test("separated sensitivity ranges support the lower-sun ordering", () => {
+  assert.equal(
+    sensitivitySupportsLowerSun(
+      scheduleScore("reference", 960, 660, [600, 720]),
+      scheduleScore("candidate", 1_020, 480, [420, 540]),
+    ),
+    true,
+  );
+  assert.equal(
+    sensitivitySupportsLowerSun(
+      scheduleScore("reference", 960, 660, [600, 720]),
+      scheduleScore("touching", 1_020, 540, [480, 600]),
+    ),
+    false,
+  );
+});
+
+test("least-sun requires strict sensitivity dominance over every displayed route", () => {
+  const candidate = scheduleScore("candidate", 1_300, 300, [240, 360]);
+  const clearlyHigher = scheduleScore("clearly-higher", 960, 600, [480, 720]);
+  const overlappingThird = scheduleScore("overlapping-third", 1_080, 420, [350, 540]);
+
+  assert.equal(
+    sensitivityEstablishesLowestSun(candidate, [candidate, clearlyHigher]),
+    true,
+  );
+  assert.equal(
+    sensitivityEstablishesLowestSun(candidate, [candidate, clearlyHigher, overlappingThird]),
+    false,
+  );
+
+  const labelled = labelRouteScores([candidate, clearlyHigher, overlappingThird], "vulnerable");
+  assert.deepEqual(
+    labelled.find((score) => score.routeId === "candidate").labels,
+    ["lowest-estimate"],
+  );
 });
 
 test("datetime-local values are interpreted in Europe/London for GMT and BST", () => {

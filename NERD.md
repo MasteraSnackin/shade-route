@@ -3,10 +3,11 @@
 ## Outcome
 
 The current engine is correctly sized for the two corridor pilots: route and
-schedule scoring is below one frame budget only when performed off the main
-thread, while the map-wide ground-shadow raster remains the dominant cost. One
-low-risk hot-loop optimisation reduced the median full-frame cost by 10.8%
-without changing a single output pixel.
+schedule scoring is below one player interval only when performed off the main
+thread, while the map-wide ground-shadow raster remains the dominant cost. The
+uncertainty-aware renderer exposes certain, possible, unknown and
+search-limited display channels without changing output between its generic
+reference path and production fast path.
 
 ## Core algorithms profiled
 
@@ -26,14 +27,18 @@ departure slots)`, bounded by the pilot size, route count and schedule limits.
 ### Ground-shadow raster
 
 The map visual projects directional offsets across every source/target grid
-cell. Complexity is approximately `O(grid cells × cast offsets)`. The result is
-a binary display layer, not the route model's min/max uncertainty channel.
+cell. Complexity is approximately `O(grid cells × cast offsets)`. Minimum and
+maximum surface planes now separate certain from possible shade. Missing or
+edge-limited rays remain unknown, and unconfirmed rays longer than 250 m use a
+distinct search-limited channel rather than being shown as clear or shaded.
 
 ### Worker orchestration
 
 Five raster planes are copied once during worker initialisation. Requests are
 generation-tagged and pending work is coalesced to the latest message. A running
-synchronous calculation cannot yet be interrupted.
+synchronous calculation cannot yet be interrupted. The four visual classes are
+encoded in the existing RGBA frame, so the worker transfers no extra per-cell
+buffer.
 
 ## Benchmark method
 
@@ -57,43 +62,57 @@ npm run benchmark:engine
 
 | Workload | Result |
 | --- | --- |
-| Baseline low-sun shadow-frame median | 93.362 ms |
-| Optimised low-sun shadow-frame median | 83.288 ms |
-| Median reduction | 10.8% |
-| Final measured p95 | 121.012 ms |
-| Output hash before and after | `46d567aa` |
-| Shadow coverage before and after | 96.11867364746945% |
-| Nine times × three routes × eight journeys | 54.988 ms median; 61.009 ms p95 |
-| Five-plane worker copy | 5,013,750 bytes; 0.282 ms median |
+| Generic low-sun reference median | 133.812 ms |
+| Production low-sun fast-path median | 54.896 ms |
+| Paired median reduction | 59.0% |
+| Production p95 | 63.431 ms |
+| Output hash for both paths | `97be4a9b` |
+| Shadow coverage for both paths | 78.23413612565446% |
+| Nine times × three routes × eight journeys | 82.464 ms median; 87.254 ms p95 |
+| Five-plane worker copy | 5,013,750 bytes; 0.346 ms median; 0.955 ms p95 |
 
-The original development comparison above is retained as historical evidence.
-The committed reference switch now makes the comparison directly reproducible.
-On the final-tree rerun it measured 89.327 ms reference versus 83.920 ms
-production median (6.1%), with the same `46d567aa` output hash. The recorded
-run is in `docs/audit/engine-benchmark-20260812.json`. Timings vary with CPU
-load, so the paired run and unchanged output are the relevant controls. These
-are local engine measurements, not low-end-phone or hosted latency claims.
+The reference run explicitly disables both renderer fast paths. A deterministic
+fixture and the full-pixel hash verify output parity. The recorded paired run is
+in `docs/audit/engine-benchmark-20260815.json`. Timings vary with CPU load, so
+the paired run and unchanged output are the relevant controls. These are local
+Node.js engine measurements, not low-end-phone, battery or hosted-latency
+claims.
+
+The earlier `docs/audit/engine-benchmark-20260812.json` records the previous
+binary-shadow implementation and is retained only as historical evidence. Its
+hash and coverage are not comparable with the current four-channel renderer.
 
 ## Implemented quick win
 
 ### Early rejection of painted target cells
 
 Overlapping cast paths repeatedly loaded validity and elevation data for target
-cells that were already known to be shadowed. The renderer now checks its
-painted mask before those reads. Shorter casts and obstacle footprints therefore
-eliminate redundant work for later offsets.
+cells that were already known to be shadowed. On sufficiently dense generic
+casts, the renderer now checks its painted mask before those reads. Shorter
+casts and obstacle footprints therefore eliminate redundant work for later
+offsets.
 
 A regression fixture uses overlapping casts and verifies identical output. The
 full pilot hash and coverage are also unchanged.
+
+### Search-limited absolute-elevation loop
+
+When all absolute-elevation cells are valid and the natural cast exceeds the
+250 m cap, possible-but-unconfirmed cells will necessarily be displayed as
+search-limited. A specialised loop therefore establishes certain shade from
+the minimum surface plane without doing unused maximum-plane work. This
+recovered the initial uncertainty-rendering regression without weakening any
+channel.
 
 ## Ranked findings
 
 ### Quick wins
 
-1. **Completed — skip already-painted target work.** Measured 10.8% in the
-   original run and 6.1% in the committed final-tree comparison.
-2. Split absolute and legacy elevation loops so current pilot frames do not
-   repeatedly branch on model format.
+1. **Completed — skip already-painted target work.** Exact-union regression
+   fixtures verify parity; the low-sun pilot benchmark measures the combined
+   production fast paths rather than attributing a separate percentage here.
+2. **Completed for the dominant low-sun path — split the complete absolute-
+   elevation loop and omit unused maximum-plane work.**
 3. Preclassify unmodelled direction ranges in prepared route geometry rather
    than rescanning instruction text for every sample.
 4. Reuse bounded scratch masks only after proving that lifecycle and concurrent
@@ -102,11 +121,13 @@ full pilot hash and coverage are also unchanged.
 ### Medium efforts
 
 1. Add cooperative/chunked cancellation. Coalescing removes queued work but
-   cannot interrupt an active 83 ms shadow render or 55 ms advice scan.
+   cannot interrupt an active render or advice scan. The recorded local medians
+   are 54.896 ms and 82.464 ms respectively, but device behaviour remains
+   unmeasured.
 2. Prototype a terrain-safe scanline or directional-horizon representation and
    compare exact shadow-edge error against the current ray caster.
-3. Add explicit search-limit and uncertainty metadata to the visual shadow
-   frame so the map and route model communicate the same low-sun limitation.
+3. **Completed — expose explicit search-limit and uncertainty metadata in the
+   visual frame, worker protocol, map status and labelled overlay key.**
 4. Tile larger grids and model provenance before adding another city or a
    UK-wide extent.
 
@@ -120,13 +141,13 @@ full pilot hash and coverage are also unchanged.
 
 ## Correctness risks
 
-- The map-wide visual silently stops casts at 250 m; route scoring explicitly
-  reports a `ray-search-limit` reason.
-- The ground visual uses maximum surface heights and has no uncertain-shadow
-  channel, while route scoring uses both minimum and maximum envelopes.
-- A future malformed grid containing non-finite absolute values could fall back
-  to the legacy height for a visual ray. Exhaustive checks found zero such valid
-  cells in either current pilot pack.
+- The map-wide visual stops casts at 250 m and labels unresolved cells; it still
+  cannot determine what lies beyond that bound.
+- The ground visual and route scorer both use minimum/maximum surface envelopes,
+  but they rasterise and sample at different spatial resolutions, so their edges
+  should not be presented as identical observations.
+- Non-finite or partly covered height cells now become unknown and can propagate
+  an unknown cast; this is fail-closed but may reduce the visually resolved area.
 - Four-metre min/max aggregation protects an uncertainty envelope but cannot
   reproduce every one-metre shadow edge.
 
@@ -142,6 +163,6 @@ full pilot hash and coverage are also unchanged.
 ## Recommendation
 
 Do not pursue GPU rendering or a large horizon product before field calibration.
-The next engineering change should make the visual disclose its low-sun search
-limit, followed by cooperative cancellation if real low-end-device traces show
-that an 80–120 ms worker task still harms interaction or battery use.
+The next engineering change should be real-device tracing, followed by
+cooperative cancellation if low-end-phone evidence shows that an 80–120 ms
+worker task still harms interaction or battery use.

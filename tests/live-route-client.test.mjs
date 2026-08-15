@@ -179,6 +179,26 @@ test("HTTP route failures retain their safe message and status", async () => {
   assert.equal(isLiveRouteRequestCancelledError(error), false);
 });
 
+test("the selected access preference is sent explicitly to the same-origin route API", async () => {
+  let requestBody;
+  const client = new LiveRouteRequestClient({
+    fetchImplementation: async (_url, init) => {
+      requestBody = JSON.parse(init.body);
+      return successfulResponse(WATERLOO_INPUT);
+    },
+  });
+
+  await client.request({
+    ...WATERLOO_INPUT,
+    accessPreference: "avoid-known-steps",
+  });
+  assert.deepEqual(requestBody, {
+    origin: WATERLOO_INPUT.origin,
+    destination: WATERLOO_INPUT.destination,
+    accessPreference: "avoid-known-steps",
+  });
+});
+
 test("route lookup has a bounded client deadline distinct from user cancellation", async (t) => {
   async function expectTimeout(fetchImplementation) {
     const client = new LiveRouteRequestClient({

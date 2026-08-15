@@ -168,7 +168,9 @@ test("journey mode preserves the reference warning, focus and concise range sema
     "utf8",
   );
   assert.match(source, /Reference only — not emergency navigation/);
-  assert.match(source, /Preview walking steps/);
+  assert.match(source, /Field route reference/);
+  assert.match(source, /Walking steps and exposure ahead/);
+  assert.match(source, /Exit field reference/);
   assert.doesNotMatch(source, /Walk this route/);
   assert.match(source, /aria-describedby="journey-mode-warning"/);
   assert.match(source, /role="status" aria-atomic="true"/);

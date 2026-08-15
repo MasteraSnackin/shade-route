@@ -19,7 +19,7 @@ const TEXT_LIMITS = {
   version: 80,
 } as const;
 
-const ROUTE_LABELS = ["fastest", "least-sun", "recommended"] as const;
+const ROUTE_LABELS = ["fastest", "least-sun", "lowest-estimate", "recommended"] as const;
 const CONFIDENCE_REASONS = [
   "incomplete-height-coverage",
   "low-sun-angle",

@@ -1,21 +1,40 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { HeatContextAvailable } from "../lib/heat-context";
+import type {
+  HeatContextAvailable,
+  HeatContextCacheable,
+  HeatContextNoActiveAlert,
+} from "../lib/heat-context";
 
 type ViewState =
   | { kind: "loading" }
-  | { kind: "available"; context: HeatContextAvailable }
+  | { kind: "ready"; context: HeatContextCacheable }
   | { kind: "error" };
 
-function validContext(value: unknown): value is HeatContextAvailable {
+function validCommonContext(
+  value: unknown,
+): value is Partial<HeatContextAvailable | HeatContextNoActiveAlert> {
   if (!value || typeof value !== "object") return false;
-  const context = value as Partial<HeatContextAvailable>;
-  const scale = context.scale as Partial<HeatContextAvailable["scale"]> | undefined;
+  const context = value as Partial<HeatContextAvailable | HeatContextNoActiveAlert>;
   return (
-    context.status === "available" &&
     context.region === "London" &&
     context.regionType === "Government Office Region" &&
+    typeof context.stale === "boolean"
+  );
+}
+
+function validContext(value: unknown): value is HeatContextCacheable {
+  if (!validCommonContext(value)) return false;
+  const context = value as Partial<HeatContextAvailable | HeatContextNoActiveAlert>;
+
+  if (context.status === "no_active_alert") {
+    return typeof context.message === "string" && context.message.length > 0;
+  }
+
+  if (context.status !== "available") return false;
+  const scale = context.scale as Partial<HeatContextAvailable["scale"]> | undefined;
+  return (
     typeof context.riskScore === "number" &&
     Number.isInteger(context.riskScore) &&
     context.riskScore >= 1 &&
@@ -53,7 +72,7 @@ export function HeatContext() {
         });
         const payload: unknown = await response.json();
         if (!response.ok || !validContext(payload)) throw new Error("Heat context unavailable");
-        setState({ kind: "available", context: payload });
+        setState({ kind: "ready", context: payload });
       } catch {
         if (!controller.signal.aborted) setState({ kind: "error" });
       }
@@ -85,7 +104,7 @@ export function HeatContext() {
         <p>Regional UKHSA heat-health context is currently unavailable. See {sourceLink}.</p>
       ) : null}
 
-      {state.kind === "available" ? (
+      {state.kind === "ready" && state.context.status === "available" ? (
         <>
           <p>
             {state.context.stale ? "Previously fetched" : "Latest fetched"} UKHSA risk score for
@@ -93,6 +112,17 @@ export function HeatContext() {
             <time dateTime={state.context.asOf}>{formatDate(state.context.asOf)}</time>.
           </p>
           <p>Source: {sourceLink}.</p>
+        </>
+      ) : null}
+
+      {state.kind === "ready" && state.context.status === "no_active_alert" ? (
+        <>
+          <p>
+            {state.context.stale
+              ? "A previously fetched UKHSA response reported no active London heat-health alert."
+              : "UKHSA currently returns no active London heat-health alert."}
+          </p>
+          <p>Source: {sourceLink}. No active alert does not mean that an individual journey is safe.</p>
         </>
       ) : null}
 

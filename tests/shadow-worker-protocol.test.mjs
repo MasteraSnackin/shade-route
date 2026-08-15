@@ -113,7 +113,14 @@ test("response pixels can be transferred and reconstructed without copying", () 
     isDaylight: true,
     azimuthDeg: 180,
     altitudeDeg: 61.5,
+    lowSun: false,
     shadowPercent: 50,
+    certainShadowPercent: 50,
+    possibleShadowPercent: 0,
+    unknownPercent: 0,
+    searchLimitedPercent: 0,
+    raySearchLimitMetres: 250,
+    lowSunThresholdDegrees: 3,
   };
   const { message, transfer } = createShadowRenderSuccess(11, frame);
   const received = structuredClone(message, { transfer });
@@ -126,6 +133,8 @@ test("response pixels can be transferred and reconstructed without copying", () 
   const reconstructed = groundShadowFrameFromResponse(received);
   assert.deepEqual([...reconstructed.pixels], [55, 70, 82, 104, 0, 0, 0, 0]);
   assert.equal(reconstructed.altitudeDeg, 61.5);
+  assert.equal(reconstructed.certainShadowPercent, 50);
+  assert.equal(reconstructed.raySearchLimitMetres, 250);
 });
 
 test("response validation rejects malformed or stale-looking payloads", () => {
@@ -134,21 +143,43 @@ test("response validation rejects malformed or stale-looking payloads", () => {
   assert.equal(isShadowRenderResponse({ type: SHADOW_RENDER_SUCCESS, generation: 1.5 }), false);
 });
 
-test("the map integrates the module worker with fallback and accessible status", async () => {
+test("the map conceals stale frames and keeps a generation-bound fallback", async () => {
   const source = await readFile(
     new URL("../components/RouteMap.tsx", import.meta.url),
     "utf8",
   );
 
-  assert.match(source, /new Worker\(new URL\("\.\.\/workers\/shadow-worker\.ts", import\.meta\.url\)/);
+  assert.match(source, /shadow-worker\.ts\?worker&url/);
+  assert.match(source, /new Worker\(shadowWorkerUrl/);
+  assert.match(source, /maplibre-gl-worker\.mjs\?worker&url/);
+  assert.match(source, /maplibregl\.setWorkerUrl\(mapLibreWorkerUrl\)/);
   assert.match(source, /type: "module"/);
   assert.match(source, /createShadowGridInitialisation\(version, grid\)/);
   assert.match(source, /workerInstance\.postMessage\(initialisation\.message, initialisation\.transfer\)/);
   assert.match(source, /workerInstance\.postMessage\(message\)/);
-  assert.match(source, /renderSynchronously\(\)/);
+  assert.match(source, /renderGroundShadowFrame\(grid, departureDate, centre\)/);
+  assert.match(source, /applyShadowFrame\(grid, frame, "fallback"\)/);
+  assert.match(source, /if \(typeof Worker === "undefined"\) \{\s*renderFallback\(\)/);
+  assert.match(source, /\(\) => failWorker\("worker-timeout"\)/);
+  assert.match(source, /useLayoutEffect/);
+  assert.match(source, /concealGroundShadowOverlay\(map\)/);
+  assert.match(source, /phase: "loading"/);
+  assert.match(source, /markUnavailable\("height-data"\)/);
+  assert.match(source, /markUnavailable\("render"\)/);
+  assert.match(source, /renderMode: "worker" \| "fallback"/);
+  assert.match(source, /rendered on this device without the background worker/);
+  assert.match(source, /aria-busy/);
+  assert.match(source, /!mapFailure &&\s*departureDate/);
+  assert.match(source, /The previous overlay is hidden/);
+  assert.match(source, /SHADOW_WORKER_TIMEOUT_MS/);
+  assert.match(source, /The local 3D map did not finish loading/);
   assert.match(source, /shadowGenerationRef\.current !== generation/);
   assert.match(source, /prefers-reduced-motion: reduce/);
   assert.match(source, /role="region"/);
   assert.doesNotMatch(source, /role="application"/);
   assert.match(source, /Sun \$\{sunDirection/);
+  assert.match(source, /Model warning:/);
+  assert.match(source, /rays stop at \$\{status\.raySearchLimitMetres\} m/);
+  assert.match(source, /ground-shadow-key/);
+  assert.match(source, /GROUND_SHADOW_LEGEND\.map/);
 });

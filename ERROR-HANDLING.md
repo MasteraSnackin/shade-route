@@ -62,6 +62,7 @@ Supported codes:
 - `REQUEST_TOO_LARGE`
 - `INVALID_POINTS`
 - `OUTSIDE_PILOT_AREA`
+- `ROUTE_BUSY` (`429`, retryable, with `Retry-After`)
 - `ROUTING_UNAVAILABLE`
 
 Every response includes `Cache-Control: private, no-store`, `Pragma: no-cache`
@@ -113,6 +114,11 @@ reads are explicitly raced against the attempt signal, so the deadline still
 settles if an upstream implementation ignores abort. The server accepts only
 HTTPS endpoints, except loopback HTTP in local development.
 
+An unknown access preference fails with typed `INVALID_ACCESS_PREFERENCE` and
+HTTP 400 before any upstream request. The supported avoid-steps preference is
+best effort over mapped step data and never changes the product's unconfirmed
+step-free disclosure.
+
 A stateful cross-request circuit breaker is deliberately not used in this
 prototype: it would be process-local, inconsistent across Worker isolates and
 could suppress a recovered public service. Bounded independent attempts provide
@@ -128,9 +134,15 @@ scoring, so provider failure cannot corrupt a routing decision.
 ### Web Workers
 
 Scoring and shadow clients initialise grids by version, send generation-tagged
-requests and ignore responses from replaced work. Worker construction, runtime
-or message failures cause pending requests to reject. A deterministic synchronous
-calculation path keeps the pilot usable where Worker support is unavailable.
+requests and ignore responses from replaced work. A scoring request has a
+15-second watchdog; a silent worker is detached and terminated, all of its
+pending streams use the deterministic synchronous calculation path, and the
+next request constructs a fresh worker. Timers are cleared on response,
+cancellation and fallback. Worker construction, runtime and message failures
+also degrade to the local calculation path. If both paths fail, callers receive
+the fixed `RouteScoringUnavailableError` rather than a raw worker error. Shadow
+rendering has its own bounded worker timeout and the same local fallback
+principle, so the pilot remains usable where Worker support is unavailable.
 
 ### Offline pilot packs
 

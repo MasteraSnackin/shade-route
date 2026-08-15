@@ -5,6 +5,7 @@ import test from "node:test";
 import { runInNewContext } from "node:vm";
 
 import {
+  assessOfflinePilotStorage,
   buildOfflinePilotAssetList,
   buildOfflinePilotIntegrityManifest,
   createOfflineWorkerRemovalRequest,
@@ -17,6 +18,7 @@ import {
   OFFLINE_PILOT_STORAGE_KEY,
   offlinePilotIntegrityManifestId,
   offlinePilotManifestId,
+  offlineWorkerResponseMatchesRequest,
   readVerifiedOfflinePilot,
   removeVerifiedOfflinePilot,
   writeVerifiedOfflinePilot,
@@ -159,6 +161,12 @@ test("each offline manifest contains only the selected pilot data plus shared ru
     assert.equal(waterloo.includes(asset), false);
   }
   assert.ok(waterloo.includes("/data/pilot-routes.json"));
+  assert.ok(waterloo.includes("/app-icon.svg"));
+  assert.ok(waterloo.includes("/app-icon-192.png"));
+  assert.ok(waterloo.includes("/app-icon-512.png"));
+  assert.ok(waterloo.includes("/app-icon-maskable-512.png"));
+  assert.ok(waterloo.includes("/apple-touch-icon.png"));
+  assert.ok(waterloo.includes("/manifest.webmanifest"));
   assert.ok(waterloo.includes("/_next/static/app-123.js"));
   assert.ok(waterloo.includes("/_next/static/app-456.css"));
   assert.equal(waterloo.some((asset) => asset.startsWith("/api/")), false);
@@ -185,7 +193,16 @@ test("the versioned static manifest matches every selected-pilot byte and SHA-25
     assert.ok(declared.includes(`/data/${areaId}-map.json`));
     assert.ok(declared.includes(`/data/context-${areaId}.json`));
 
-    for (const asset of ["/favicon.svg", "/data/pilot-routes.json", ...declared]) {
+    for (const asset of [
+      "/favicon.svg",
+      "/app-icon.svg",
+      "/app-icon-192.png",
+      "/app-icon-512.png",
+      "/app-icon-maskable-512.png",
+      "/apple-touch-icon.png",
+      "/data/pilot-routes.json",
+      ...declared,
+    ]) {
       const contents = await readFile(new URL(`../public${asset}`, import.meta.url));
       const expected = OFFLINE_PILOT_STATIC_ASSET_INTEGRITY[asset];
       assert.ok(expected, `${asset} has no pinned integrity entry`);
@@ -212,6 +229,7 @@ test("the complete manifest pins generated runtime assets by bytes and SHA-256",
   );
   const bodies = new Map([
     ["/", "<!doctype html><title>ShadeRoute</title>"],
+    ["/manifest.webmanifest", '{"name":"ShadeRoute London pilot"}'],
     ["/_next/static/app.js", "console.log('shade-route');"],
     ["/_next/static/app.css", ":root{color-scheme:light}"],
   ]);
@@ -239,7 +257,7 @@ test("the complete manifest pins generated runtime assets by bytes and SHA-256",
   assert.deepEqual(one, two);
   assert.deepEqual(
     [...new Set(fetched)].sort(),
-    ["/", "/_next/static/app.css", "/_next/static/app.js"],
+    ["/", "/_next/static/app.css", "/_next/static/app.js", "/manifest.webmanifest"],
     "release-pinned public files should not be fetched to construct the manifest",
   );
   for (const [path, body] of bodies) {
@@ -334,6 +352,59 @@ test("manifest fingerprints and worker requests are deterministic and version-bo
     requestId: "remove-1",
     areaId: "kings-cross",
   });
+});
+
+test("storage preflight is advisory, bounded and selected-pilot specific", () => {
+  assert.deepEqual(assessOfflinePilotStorage("waterloo"), {
+    status: "unknown",
+    requiredDataBytes: OFFLINE_PILOT_DATA_BYTES.waterloo,
+    availableBytes: null,
+  });
+  assert.equal(
+    assessOfflinePilotStorage("waterloo", { quota: 20_000_000, usage: 1_000_000 }).status,
+    "sufficient",
+  );
+  assert.deepEqual(
+    assessOfflinePilotStorage("kings-cross", { quota: 14_000_000, usage: 2_000_000 }),
+    {
+      status: "low",
+      requiredDataBytes: OFFLINE_PILOT_DATA_BYTES["kings-cross"],
+      availableBytes: 12_000_000,
+    },
+  );
+  assert.equal(
+    assessOfflinePilotStorage("waterloo", { quota: 1, usage: 2 }).status,
+    "unknown",
+  );
+});
+
+test("MessageChannel replies must match the request, area and success shape", async () => {
+  const manifest = await syntheticIntegrityManifest("waterloo", ["/", "/data/a"]);
+  const request = createOfflineWorkerPreparationRequest("waterloo", manifest, "bound-request");
+  const response = {
+    ok: true,
+    type: "PACK_PREPARED",
+    requestId: "bound-request",
+    areaId: "waterloo",
+    packVersion: OFFLINE_PILOT_PACK_VERSION,
+    workerVersion: "worker-v1",
+    assetCount: 2,
+    integrityManifestId: manifest.manifestId,
+  };
+  assert.equal(offlineWorkerResponseMatchesRequest(request, response), true);
+  assert.equal(
+    offlineWorkerResponseMatchesRequest(request, { ...response, requestId: "stale-request" }),
+    false,
+  );
+  assert.equal(
+    offlineWorkerResponseMatchesRequest(request, { ...response, areaId: "kings-cross" }),
+    false,
+  );
+  assert.equal(
+    offlineWorkerResponseMatchesRequest(request, { ...response, type: "PACK_VERIFIED" }),
+    false,
+  );
+  assert.equal(offlineWorkerResponseMatchesRequest(request, "not-a-response"), false);
 });
 
 test("the service worker stages and verifies replacements without caching online-only APIs", async () => {
@@ -531,6 +602,11 @@ test("the preparation component makes readiness and online-only limits explicit"
   assert.match(source, /Live heat information also needs a connection/);
   assert.match(source, /Browser or device storage controls may clear it/);
   assert.match(source, /verify the pack before relying on offline access/);
+  assert.match(source, /This device reports that it is offline/);
+  assert.match(source, /assessOfflinePilotStorage/);
+  assert.match(source, /offlineWorkerResponseMatchesRequest/);
+  assert.match(source, /operationInProgressRef\.current/);
+  assert.match(source, /if \(!mountedRef\.current\) return/);
   assert.match(source, /Apply offline support update/);
   assert.match(source, /Remove \$\{areaName\} offline pilot pack/);
   assert.match(source, /worker confirms[\s\S]*removeVerifiedOfflinePilot/);
@@ -540,10 +616,16 @@ test("the preparation component makes readiness and online-only limits explicit"
   assert.match(source, /writeVerifiedOfflinePilot/);
   assert.match(source, /scoring-worker\.ts\?worker&url/);
   assert.match(source, /shadow-worker\.ts\?worker&url/);
+  assert.match(source, /maplibre-gl-worker\.mjs\?worker&url/);
+  assert.match(source, /new URL\(mapLibreWorkerUrl, origin\)\.toString\(\)/);
+  assert.match(source, /Offline pack verified — continue to the field route reference/);
+  assert.match(source, /Continue to route selection/);
 
   const styles = await readFile(
     new URL("../components/OfflinePilotPreparation.module.css", import.meta.url),
     "utf8",
   );
   assert.match(styles, /\.actions button\s*\{[\s\S]*?min-height:\s*44px/);
+  assert.match(styles, /\.fieldAction\s*\{[\s\S]*?min-height:\s*44px/);
+  assert.match(styles, /prefers-reduced-motion:\s*reduce/);
 });

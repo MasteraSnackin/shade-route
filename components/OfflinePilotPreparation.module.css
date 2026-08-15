@@ -121,6 +121,49 @@
   color: #74321f;
 }
 
+.fieldHandoff {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid #7ba494;
+  border-radius: 10px;
+  background: #eaf5f0;
+}
+
+.fieldHandoff strong,
+.fieldHandoff p {
+  display: block;
+  margin: 0;
+}
+
+.fieldHandoff p {
+  margin-top: 4px;
+  color: #405b52;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.fieldAction {
+  min-height: 44px;
+  padding: 9px 13px;
+  border: 1px solid #075f56;
+  border-radius: 9px;
+  background: #fff;
+  color: #075f56;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.fieldAction:focus-visible {
+  outline: 3px solid color-mix(in srgb, #075f56 35%, transparent);
+  outline-offset: 2px;
+}
+
 @media (max-width: 560px) {
   .heading {
     display: grid;
@@ -132,5 +175,21 @@
 
   .actions button {
     width: 100%;
+  }
+
+  .fieldHandoff {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .fieldAction {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel *,
+  .panel *::before,
+  .panel *::after {
+    scroll-behavior: auto !important;
   }
 }

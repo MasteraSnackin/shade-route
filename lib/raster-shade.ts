@@ -115,7 +115,7 @@ export interface ScheduleScore extends RasterRouteScore {
   journeys: ScheduleJourney[];
 }
 
-export type RouteLabel = "recommended" | "least-sun" | "fastest";
+export type RouteLabel = "recommended" | "least-sun" | "lowest-estimate" | "fastest";
 
 export interface LabelledRasterScore extends ScheduleScore {
   labels: RouteLabel[];
@@ -766,6 +766,35 @@ function perJourneyDuration(score: ScheduleScore) {
   return score.durationSeconds / Math.max(1, score.journeyCount);
 }
 
+type DirectSunSensitivity = Pick<ScheduleScore, "directSunRangeSeconds">;
+
+/**
+ * A lower point estimate is not enough to claim a lower-sun option. The
+ * candidate's worst-case sensitivity bound must also sit below the reference
+ * route's best-case bound; touching or overlapping ranges are inconclusive.
+ */
+export function sensitivitySupportsLowerSun(
+  reference: DirectSunSensitivity,
+  candidate: DirectSunSensitivity,
+) {
+  return candidate.directSunRangeSeconds[1] < reference.directSunRangeSeconds[0];
+}
+
+/**
+ * Establish a lowest-sun ordering only when the candidate's complete
+ * sensitivity range is strictly below every other displayed route. A point
+ * estimate alone, or touching bounds, can support only a descriptive label.
+ */
+export function sensitivityEstablishesLowestSun(
+  candidate: ScheduleScore,
+  scores: readonly ScheduleScore[],
+) {
+  return scores.every(
+    (other) =>
+      other.routeId === candidate.routeId || sensitivitySupportsLowerSun(other, candidate),
+  );
+}
+
 function readableMinutes(seconds: number) {
   if (seconds < 60) return "less than 1 min";
   return `${Math.max(1, Math.round(seconds / 60))} min`;
@@ -791,6 +820,8 @@ export function labelRouteScores(
   const hasMeaningfulSunDifference =
     scores.some((score) => score.isDaylight) &&
     Math.max(...sunValues) - Math.min(...sunValues) >= minimumVisibleDifference;
+  const leastSunOrderingEstablished =
+    hasMeaningfulSunDifference && sensitivityEstablishesLowestSun(leastSun, scores);
 
   const fastestDuration = perJourneyDuration(fastest);
   const profileDetourFraction = profile === "vulnerable" ? 0.2 : 0.15;
@@ -808,12 +839,38 @@ export function labelRouteScores(
     }
     return best;
   });
-  const improvement = fastest.estimatedDirectSunSeconds - bestEligible.estimatedDirectSunSeconds;
   const meaningfulImprovement = Math.max(
     minimumVisibleDifference,
     fastest.estimatedDirectSunSeconds * 0.05,
   );
-  const recommended = improvement >= meaningfulImprovement ? bestEligible : fastest;
+  const eligibleSensitivityAlternatives = eligible.filter(
+    (score) =>
+      score.routeId !== fastest.routeId &&
+      fastest.estimatedDirectSunSeconds - score.estimatedDirectSunSeconds >=
+        meaningfulImprovement &&
+      sensitivitySupportsLowerSun(fastest, score),
+  );
+  const sensitivityLowestAlternative = eligibleSensitivityAlternatives.find((candidate) =>
+    sensitivityEstablishesLowestSun(candidate, eligibleSensitivityAlternatives),
+  );
+  const supportedAlternativesOverlap =
+    eligibleSensitivityAlternatives.length > 1 && !sensitivityLowestAlternative;
+  // If several alternatives are all demonstrably below the fastest route but
+  // overlap one another, prefer the shortest journey rather than breaking the
+  // uncertainty tie with their point estimates.
+  const bestSensitivityAlternative = sensitivityLowestAlternative ??
+    eligibleSensitivityAlternatives.reduce<ScheduleScore | null>(
+      (best, score) =>
+        !best || perJourneyDuration(score) < perJourneyDuration(best) ? score : best,
+      null,
+    );
+  const pointEstimateImprovement =
+    fastest.estimatedDirectSunSeconds - bestEligible.estimatedDirectSunSeconds;
+  const estimateSupportsAlternative =
+    bestEligible.routeId !== fastest.routeId &&
+    pointEstimateImprovement >= meaningfulImprovement;
+  const recommended = bestSensitivityAlternative ?? fastest;
+  const improvement = fastest.estimatedDirectSunSeconds - recommended.estimatedDirectSunSeconds;
   const extraPerJourney = Math.max(0, perJourneyDuration(recommended) - fastestDuration);
   let recommendationReason: string;
   if (!scores.some((score) => score.isDaylight)) {
@@ -821,9 +878,15 @@ export function labelRouteScores(
   } else if (recommended.routeId === fastest.routeId && recommended.routeId === leastSun.routeId) {
     recommendationReason =
       "This is both the fastest eligible route and the route with the lowest displayed direct-sun estimate.";
+  } else if (estimateSupportsAlternative && !bestSensitivityAlternative) {
+    recommendationReason =
+      "The fastest route is suggested because the lower point estimate on an alternative is not established by the overlapping model sensitivity ranges.";
   } else if (recommended.routeId === fastest.routeId) {
     recommendationReason =
       `The fastest route is suggested because eligible alternatives save ${readableMinutes(Math.max(0, improvement))} of displayed direct sun.`;
+  } else if (supportedAlternativesOverlap) {
+    recommendationReason =
+      `Several eligible lower-sun ranges overlap, so this is the fastest option whose whole sensitivity range is below the fastest route, adding ${readableMinutes(extraPerJourney)} per journey.`;
   } else {
     recommendationReason =
       `This route saves about ${readableMinutes(improvement)} of displayed direct sun for ${readableMinutes(extraPerJourney)} extra per journey, within the ${readableMinutes(allowedExtraPerJourney)} detour limit.`;
@@ -832,7 +895,9 @@ export function labelRouteScores(
   return scores.map((score) => {
     const labels: RouteLabel[] = [];
     if (score.routeId === recommended.routeId) labels.push("recommended");
-    if (hasMeaningfulSunDifference && score.routeId === leastSun.routeId) labels.push("least-sun");
+    if (hasMeaningfulSunDifference && score.routeId === leastSun.routeId) {
+      labels.push(leastSunOrderingEstablished ? "least-sun" : "lowest-estimate");
+    }
     if (score.routeId === fastest.routeId) labels.push("fastest");
     return {
       ...score,

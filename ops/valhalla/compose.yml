@@ -1,0 +1,27 @@
+services:
+  valhalla:
+    image: ghcr.io/valhalla/valhalla-scripted@sha256:24ef7955899dececb94e26c6dfb89d64fabfae875f980432694b0261eb6c251b
+    container_name: shaderoute-valhalla
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8002:8002"
+    volumes:
+      - ./data:/custom_files
+    environment:
+      tile_urls: https://download.geofabrik.de/europe/united-kingdom/england/greater-london-260814.osm.pbf
+      build_admins: "False"
+      build_time_zones: "True"
+      build_elevation: "False"
+      build_transit: "False"
+      build_tar: "True"
+      force_rebuild: "False"
+      serve_tiles: "True"
+      server_threads: "2"
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8002/status"]
+      interval: 15s
+      timeout: 3s
+      retries: 8
+      start_period: 5m

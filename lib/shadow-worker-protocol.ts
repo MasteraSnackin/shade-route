@@ -163,7 +163,14 @@ export function createShadowRenderSuccess(
         isDaylight: frame.isDaylight,
         azimuthDeg: frame.azimuthDeg,
         altitudeDeg: frame.altitudeDeg,
+        lowSun: frame.lowSun,
         shadowPercent: frame.shadowPercent,
+        certainShadowPercent: frame.certainShadowPercent,
+        possibleShadowPercent: frame.possibleShadowPercent,
+        unknownPercent: frame.unknownPercent,
+        searchLimitedPercent: frame.searchLimitedPercent,
+        raySearchLimitMetres: frame.raySearchLimitMetres,
+        lowSunThresholdDegrees: frame.lowSunThresholdDegrees,
       },
     },
     transfer: [pixels],
@@ -176,14 +183,29 @@ export function isShadowRenderResponse(value: unknown): value is ShadowRenderRes
   if (!Number.isSafeInteger(response.generation)) return false;
   if (response.type === SHADOW_RENDER_FAILURE) return typeof response.error === "string";
   if (response.type !== SHADOW_RENDER_SUCCESS || !response.frame) return false;
+  const isBoundedPercent = (candidate: unknown) =>
+    typeof candidate === "number" &&
+    Number.isFinite(candidate) &&
+    candidate >= 0 &&
+    candidate <= 100;
   return (
-    Number.isSafeInteger(response.frame.width) &&
-    Number.isSafeInteger(response.frame.height) &&
+    Number.isSafeInteger(response.frame.width) && response.frame.width > 0 &&
+    Number.isSafeInteger(response.frame.height) && response.frame.height > 0 &&
     response.frame.pixels instanceof ArrayBuffer &&
+    response.frame.pixels.byteLength === response.frame.width * response.frame.height * 4 &&
     typeof response.frame.isDaylight === "boolean" &&
     Number.isFinite(response.frame.azimuthDeg) &&
     Number.isFinite(response.frame.altitudeDeg) &&
-    Number.isFinite(response.frame.shadowPercent)
+    typeof response.frame.lowSun === "boolean" &&
+    isBoundedPercent(response.frame.shadowPercent) &&
+    isBoundedPercent(response.frame.certainShadowPercent) &&
+    isBoundedPercent(response.frame.possibleShadowPercent) &&
+    isBoundedPercent(response.frame.unknownPercent) &&
+    isBoundedPercent(response.frame.searchLimitedPercent) &&
+    Number.isFinite(response.frame.raySearchLimitMetres) &&
+    response.frame.raySearchLimitMetres > 0 &&
+    Number.isFinite(response.frame.lowSunThresholdDegrees) &&
+    response.frame.lowSunThresholdDegrees > 0
   );
 }
 
