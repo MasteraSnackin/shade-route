@@ -175,7 +175,9 @@ calibration is pending.
 
 ![King’s Cross to UCLH route comparison on the 3D map](docs/demo/shaderoute-route-comparison.jpg)
 
-[![ShadeRoute 3D shade playback and time controls](docs/demo/shaderoute-3d-shade-playback.jpg)](docs/demo/shaderoute-frontline-london-demo.mp4)
+[![10-second animated ShadeRoute journey and 3D map preview](docs/demo/shaderoute-animated-preview.gif)](docs/demo/shaderoute-frontline-london-demo.mp4)
+
+The animated preview is silent; select it to watch the full narrated demonstration.
 
 ### Desktop
 
