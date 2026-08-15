@@ -226,10 +226,9 @@ remains visible for its underlying data.
 ## Screenshots and demo
 
 ### Presentation and video
+[Watch the 2-minute 14-second demonstration](https://1drv.ms/v/c/220eb79e024bb8de/IQBUBT6BDhXfTpjArAMLUECIATI5m1yAdxERaeq5m6ABmSw?e=WG4hfg)
+· [View the slides](https://1drv.ms/p/c/220eb79e024bb8de/IQAObMuJwcMHQZl4AM3bDRReAZ4pJ5oNVBf3PJWjuFZM_XY?e=Ffpm4h)
 
-[Download the 2–3 minute presentation (PPTX)](docs/demo/shaderoute-frontline-london-demo.pptx)
-
-[Watch the narrated 2-minute 14-second demonstration (MP4)](docs/demo/shaderoute-frontline-london-demo.mp4),
 [download the English caption file](docs/demo/shaderoute-frontline-london-demo.en-GB.srt),
 or [read the accessible transcript](docs/demo/shaderoute-frontline-london-demo-transcript.md).
 
