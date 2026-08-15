@@ -171,10 +171,6 @@ calibration is pending.
 
 ### Product screenshots
 
-![ShadeRoute introduction and journey planner](docs/demo/shaderoute-hero.jpg)
-
-![King’s Cross to UCLH route comparison on the 3D map](docs/demo/shaderoute-route-comparison.jpg)
-
 [![10-second animated ShadeRoute journey and 3D map preview](docs/demo/shaderoute-animated-preview.gif)](docs/demo/shaderoute-frontline-london-demo.mp4)
 
 The animated preview is silent; select it to watch the full narrated demonstration.
