@@ -158,6 +158,25 @@ development and tests. Do not expose private provider keys to browser code.
 
 ## Screenshots and demo
 
+### Presentation and video
+
+[Download the 2–3 minute presentation (PPTX)](docs/demo/shaderoute-frontline-london-demo.pptx)
+
+[Watch the narrated 2 minute 17 second demonstration (MP4)](docs/demo/shaderoute-frontline-london-demo.mp4)
+or [download the English caption file](docs/demo/shaderoute-frontline-london-demo.en-GB.srt).
+
+The presentation and video use real ShadeRoute interface captures. They describe
+clear-sky model estimates and retain the project limitation that physical field
+calibration is pending.
+
+### Product screenshots
+
+![ShadeRoute introduction and journey planner](docs/demo/shaderoute-hero.jpg)
+
+![King’s Cross to UCLH route comparison on the 3D map](docs/demo/shaderoute-route-comparison.jpg)
+
+[![ShadeRoute 3D shade playback and time controls](docs/demo/shaderoute-3d-shade-playback.jpg)](docs/demo/shaderoute-frontline-london-demo.mp4)
+
 ### Desktop
 
 ![ShadeRoute desktop audit](docs/audit/after-desktop.png)
