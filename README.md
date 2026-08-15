@@ -24,7 +24,7 @@ potential direct sun. Physical field calibration is still pending.
 
 ![King’s Cross to UCLH route comparison on the 3D map](docs/demo/shaderoute-route-comparison.jpg)
 
-[Watch the 2-minute demonstration](docs/demo/shaderoute-frontline-london-demo.mp4)
+[Watch the 2-minute 14-second demonstration](docs/demo/shaderoute-frontline-london-demo.mp4)
 · [View the slides](docs/demo/shaderoute-frontline-london-demo.pptx)
 · [Run ShadeRoute locally](#installation)
 
@@ -229,12 +229,19 @@ remains visible for its underlying data.
 
 [Download the 2–3 minute presentation (PPTX)](docs/demo/shaderoute-frontline-london-demo.pptx)
 
-[Watch the narrated 2 minute 17 second demonstration (MP4)](docs/demo/shaderoute-frontline-london-demo.mp4)
-or [download the English caption file](docs/demo/shaderoute-frontline-london-demo.en-GB.srt).
+[Watch the narrated 2-minute 14-second demonstration (MP4)](docs/demo/shaderoute-frontline-london-demo.mp4),
+[download the English caption file](docs/demo/shaderoute-frontline-london-demo.en-GB.srt),
+or [read the accessible transcript](docs/demo/shaderoute-frontline-london-demo-transcript.md).
 
-The presentation and video use real ShadeRoute interface captures. They describe
-clear-sky model estimates and retain the project limitation that physical field
-calibration is pending.
+The presentation opens with a user-supplied illustration. Where the product is
+shown, the remaining slides and video use real ShadeRoute interface captures.
+The revised video
+demonstrates fullscreen, fit and zoom controls; overhead and 3D views; camera
+rotation, tilt and reset; and accelerated shade playback from sunrise into the
+evening. It also explains the qualified full-sun heat-index example, identifies
+higher-risk groups, separates current from future features, and retains the
+project limitation that physical field calibration is pending. Narration uses
+ElevenLabs' Nora British product-demo voice with Eleven Multilingual v2.
 
 ### Product screenshots
 

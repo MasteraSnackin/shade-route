@@ -1,79 +1,103 @@
 1
-00:00:00,500 --> 00:00:06,078
-ShadeRoute is a mobile-first walking planner for people who need to reduce direct-sun exposure.
+00:00:00,350 --> 00:00:02,605
+Most planners ask which route is fastest.
 
 2
-00:00:06,078 --> 00:00:12,852
-It is designed for heat-vulnerable people and carers, and for frontline or outdoor workers making repeated journeys.
+00:00:02,605 --> 00:00:06,149
+ShadeRoute also asks where direct sun may fall when you travel.
 
 3
-00:00:12,852 --> 00:00:21,618
-In the next two minutes, I’ll show how someone plans a route, compares the trade-off and watches shade move through the day.
+00:00:06,949 --> 00:00:11,380
+It compares journey time with modelled clear-sky exposure before you set off.
 
 4
-00:00:22,918 --> 00:00:26,800
-The problem is not simply finding the shortest walk.
+00:00:11,380 --> 00:00:15,073
+Here is the journey and the shade through the day.
 
 5
-00:00:26,800 --> 00:00:34,564
-Two alternatives can take roughly the same time but pass through different street canyons, open spaces and shadows.
+00:00:15,873 --> 00:00:19,681
+Similar walks cross different street canyons and open spaces.
 
 6
-00:00:34,564 --> 00:00:38,446
-ShadeRoute puts that exposure trade-off next to travel time.
+00:00:19,681 --> 00:00:31,104
+UKHSA identifies older adults, young children, pregnant women, people on certain medicines, and those with heart, lung, kidney or mobility conditions as higher risk in hot weather.
 
 7
-00:00:38,446 --> 00:00:47,936
-The current prototype focuses on two hospital corridors, where journeys may be repeated and where clarity matters more than a black-box recommendation.
+00:00:31,104 --> 00:00:34,489
+It may also help carers and outdoor workers.
 
 8
-00:00:49,236 --> 00:00:51,469
-The workflow is deliberately familiar.
+00:00:34,489 --> 00:00:37,450
+This is planning support, not medical advice.
 
 9
-00:00:51,469 --> 00:01:00,852
-First, enter the start and destination, choose a result, use the current location, or place an exact point on the map.
+00:00:38,250 --> 00:00:43,075
+The US National Weather Service heat index assumes shade and light wind.
 
 10
-00:01:00,852 --> 00:01:04,872
-Second, set the London departure time and journey needs.
+00:00:43,075 --> 00:00:48,704
+Strong sun can add up to about eight degrees Celsius to that apparent value.
 
 11
-00:01:04,872 --> 00:01:08,447
-Third, compare up to three real walking alternatives.
+00:00:48,704 --> 00:00:54,333
+Twenty-eight to thirty-six is an upper-bound example, not an air-temperature rise or fixed conversion.
 
 12
-00:01:08,447 --> 00:01:16,042
-ShadeRoute never treats unconfirmed text as a location, and custom points remain inside the selected pilot area.
+00:00:54,333 --> 00:00:58,756
+Shade reduces radiant heat; water, rest and cool recovery still matter.
 
 13
-00:01:17,342 --> 00:01:19,038
-This is the centrepiece.
+00:00:59,556 --> 00:01:07,445
+Enter locations, set the London departure time and journey needs, then compare up to three alternatives.
 
 14
-00:01:19,038 --> 00:01:27,093
-The three-dimensional map uses local building and surface data, then changes the displayed shadows as the departure time moves.
+00:01:07,445 --> 00:01:13,362
+Each shows time, potential direct sun, sensitivity, coverage and known access information.
 
 15
-00:01:27,093 --> 00:01:33,029
-The selected route is broken into potential sun, estimated shade, uncertain and unknown sections.
+00:01:13,362 --> 00:01:15,334
+Unknown evidence stays visible.
 
 16
-00:01:33,029 --> 00:01:39,389
-That means the visual is useful without pretending the model knows more than it does.
+00:01:16,134 --> 00:01:18,631
+Use fullscreen, fit and zoom.
 
 17
-00:01:39,389 --> 00:01:44,052
-The route cards remain available if three-dimensional graphics are not usable.
+00:01:18,631 --> 00:01:23,626
+Switch between overhead and three-dimensional views; rotate, tilt and reset.
 
 18
-00:01:45,352 --> 00:01:57,931
-Today, ShadeRoute can compare real route alternatives, replay shade through time, prepare verified offline pilot packs, save journeys on the device, and show optional heat or transport context.
+00:01:23,626 --> 00:01:29,619
+Keep the route fixed and move from sunrise through midday into evening.
 
 19
-00:01:57,931 --> 00:02:11,409
-The next step is not a wider claim; it is a controlled field pilot across the two corridors, with carers and outdoor workers, and measured calibration before any stronger recommendation.
+00:01:29,619 --> 00:01:37,111
+Shadows move while certain shade, possible shade, unknown coverage and the two-hundred-and-fifty-metre limit remain visible.
 
 20
-00:02:11,409 --> 00:02:16,351
-ShadeRoute is practical now and honest about what still needs proof.
+00:01:37,911 --> 00:01:45,288
+The pilot can show selected water points, GLA cool spaces, toilets and benches where data exists.
+
+21
+00:01:45,288 --> 00:01:49,900
+Public buildings, medical help and shade-gap analysis are future possibilities.
+
+22
+00:01:49,900 --> 00:01:56,816
+A prepared offline pack keeps the bundled map and model available; live services remain online.
+
+23
+00:01:56,816 --> 00:01:59,122
+This is not emergency navigation.
+
+24
+00:01:59,922 --> 00:02:07,232
+Next is a controlled field pilot in two London hospital corridors, tested with carers and outdoor workers and calibrated against observations.
+
+25
+00:02:07,232 --> 00:02:10,364
+Stronger claims should follow only if evidence supports them.
+
+26
+00:02:10,364 --> 00:02:13,845
+Show what the model knows, and what it does not.
