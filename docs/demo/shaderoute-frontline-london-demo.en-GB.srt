@@ -1,0 +1,79 @@
+1
+00:00:00,500 --> 00:00:06,078
+ShadeRoute is a mobile-first walking planner for people who need to reduce direct-sun exposure.
+
+2
+00:00:06,078 --> 00:00:12,852
+It is designed for heat-vulnerable people and carers, and for frontline or outdoor workers making repeated journeys.
+
+3
+00:00:12,852 --> 00:00:21,618
+In the next two minutes, I’ll show how someone plans a route, compares the trade-off and watches shade move through the day.
+
+4
+00:00:22,918 --> 00:00:26,800
+The problem is not simply finding the shortest walk.
+
+5
+00:00:26,800 --> 00:00:34,564
+Two alternatives can take roughly the same time but pass through different street canyons, open spaces and shadows.
+
+6
+00:00:34,564 --> 00:00:38,446
+ShadeRoute puts that exposure trade-off next to travel time.
+
+7
+00:00:38,446 --> 00:00:47,936
+The current prototype focuses on two hospital corridors, where journeys may be repeated and where clarity matters more than a black-box recommendation.
+
+8
+00:00:49,236 --> 00:00:51,469
+The workflow is deliberately familiar.
+
+9
+00:00:51,469 --> 00:01:00,852
+First, enter the start and destination, choose a result, use the current location, or place an exact point on the map.
+
+10
+00:01:00,852 --> 00:01:04,872
+Second, set the London departure time and journey needs.
+
+11
+00:01:04,872 --> 00:01:08,447
+Third, compare up to three real walking alternatives.
+
+12
+00:01:08,447 --> 00:01:16,042
+ShadeRoute never treats unconfirmed text as a location, and custom points remain inside the selected pilot area.
+
+13
+00:01:17,342 --> 00:01:19,038
+This is the centrepiece.
+
+14
+00:01:19,038 --> 00:01:27,093
+The three-dimensional map uses local building and surface data, then changes the displayed shadows as the departure time moves.
+
+15
+00:01:27,093 --> 00:01:33,029
+The selected route is broken into potential sun, estimated shade, uncertain and unknown sections.
+
+16
+00:01:33,029 --> 00:01:39,389
+That means the visual is useful without pretending the model knows more than it does.
+
+17
+00:01:39,389 --> 00:01:44,052
+The route cards remain available if three-dimensional graphics are not usable.
+
+18
+00:01:45,352 --> 00:01:57,931
+Today, ShadeRoute can compare real route alternatives, replay shade through time, prepare verified offline pilot packs, save journeys on the device, and show optional heat or transport context.
+
+19
+00:01:57,931 --> 00:02:11,409
+The next step is not a wider claim; it is a controlled field pilot across the two corridors, with carers and outdoor workers, and measured calibration before any stronger recommendation.
+
+20
+00:02:11,409 --> 00:02:16,351
+ShadeRoute is practical now and honest about what still needs proof.
