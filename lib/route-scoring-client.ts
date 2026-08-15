@@ -112,12 +112,6 @@ function adviceSynchronously(input: RouteDepartureAdviceInput) {
   });
 }
 
-function defaultWorkerFactory(): WorkerLike {
-  return new Worker(new URL("../workers/scoring-worker.ts", import.meta.url), {
-    type: "module",
-  });
-}
-
 /**
  * Owns one long-lived worker and one copied grid. Requests contain routes and
  * times only; switching grids cancels work tied to the previous coverage.
@@ -131,7 +125,7 @@ export class RouteScoringClient {
   private nextGridVersion = 0;
   private readonly pending = new Map<ScoringTask, PendingRequest>();
 
-  constructor(workerFactory: () => WorkerLike = defaultWorkerFactory) {
+  constructor(workerFactory: () => WorkerLike) {
     this.workerFactory = workerFactory;
   }
 
@@ -342,5 +336,3 @@ export class RouteScoringClient {
     this.worker = null;
   }
 }
-
-export const routeScoringClient = new RouteScoringClient();

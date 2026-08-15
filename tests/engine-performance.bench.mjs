@@ -95,6 +95,7 @@ const repeatEveryMinutes = 15;
 const referenceShadow = measure("reference-ground-shadow-frame", () => {
   const frame = renderGroundShadowFrame(grid, shadowDate, centre, {
     skipPaintedTargetFastPath: false,
+    searchLimitedAbsoluteFastPath: false,
   });
   return frame.shadowPercent + frame.pixels.byteLength;
 });

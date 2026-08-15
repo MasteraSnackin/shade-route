@@ -43,6 +43,21 @@ test("local place failures retain pilot landmarks and expose a bounded retry", a
   assert.match(source, /Retry local places/);
 });
 
+test("start and destination locations are visibly editable without relying on placeholders", async () => {
+  const [source, css] = await Promise.all([
+    readFile(new URL("../components/LocalPlaceSearch.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(source, /<label className="field-label" htmlFor=\{inputId\}>\{endpointLabel\} location<\/label>/);
+  assert.match(source, /id=\{helpId\}[\s\S]*?className=\{`local-place-hint/);
+  assert.match(source, /aria-describedby=\{helpId\}/);
+  assert.match(source, /aria-live="polite"/);
+  assert.match(source, /then choose a match\. Use Map for an exact point\./);
+  assert.match(css, /\.local-place-search input\[type="search"\]\s*\{[\s\S]*?border: 1px solid var\(--line-strong\);[\s\S]*?background: var\(--paper\);/);
+  assert.match(css, /\.local-place-hint\s*\{[\s\S]*?font-size: 11px;/);
+});
+
 test("dense controls retain accessible targets and user display preferences", async () => {
   const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 

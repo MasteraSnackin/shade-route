@@ -6,6 +6,22 @@ import {
 import { BoundedJsonError, readBoundedJson } from "../../../lib/bounded-json.ts";
 import { raceWithAbort } from "../../../lib/abort-race.ts";
 import type { RouteApiErrorCode } from "../../../lib/route-api-contract.ts";
+import {
+  isRouteAccessPreference,
+  type RouteAccessPreference,
+} from "../../../lib/route-preferences.ts";
+import {
+  configuredRoutingEndpoints,
+  isSafeRoutingEndpoint,
+  type RoutingEndpointConfig,
+} from "../../../lib/routing-config.ts";
+import { createRouteRequestGate } from "../../../lib/request-gate.ts";
+import {
+  emitRouteOperationalEvent,
+  type RouteOperationalArea,
+  type RouteOperationalDelivery,
+  type RouteOperationalOutcome,
+} from "../../../lib/route-operational-events.ts";
 
 const AREAS: Array<Pick<PilotArea, "id" | "bbox">> = [
   { id: "waterloo", bbox: [-0.13, 51.4915, -0.0975, 51.5095] },
@@ -18,14 +34,18 @@ const TOTAL_UPSTREAM_TIMEOUT_MS = 8_000;
 const PER_ENDPOINT_TIMEOUT_MS = 3_500;
 const MAX_REQUEST_BYTES = 4_096;
 const MAX_UPSTREAM_RESPONSE_BYTES = 1_500_000;
+const routeRequestGate = createRouteRequestGate();
 const PRIVATE_RESPONSE_HEADERS = {
   "Cache-Control": "private, no-store, max-age=0",
   Pragma: "no-cache",
   "X-Content-Type-Options": "nosniff",
 };
 
-function privateJson(body: unknown, status = 200) {
-  return Response.json(body, { status, headers: PRIVATE_RESPONSE_HEADERS });
+function privateJson(body: unknown, status = 200, headers?: HeadersInit) {
+  return Response.json(body, {
+    status,
+    headers: { ...PRIVATE_RESPONSE_HEADERS, ...Object.fromEntries(new Headers(headers)) },
+  });
 }
 
 function privateError(
@@ -33,8 +53,9 @@ function privateError(
   message: string,
   status: number,
   retryable = false,
+  headers?: HeadersInit,
 ) {
-  return privateJson({ error: message, code, retryable }, status);
+  return privateJson({ error: message, code, retryable }, status, headers);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -61,29 +82,28 @@ function areaForPoints(origin: RoutePoint, destination: RoutePoint) {
   });
 }
 
-function isSafeRoutingEndpoint(value: string) {
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" ||
-      (url.protocol === "http:" && ["localhost", "127.0.0.1"].includes(url.hostname));
-  } catch {
-    return false;
-  }
-}
-
 function routingEndpoints() {
-  const configured = [
-    process.env.VALHALLA_URL ?? "https://valhalla1.openstreetmap.de/route",
-    process.env.VALHALLA_FALLBACK_URL,
-  ].filter((value): value is string => Boolean(value));
-  return [...new Set(configured)].filter(isSafeRoutingEndpoint);
+  return configuredRoutingEndpoints();
 }
 
 interface RoutingAttemptOptions {
-  endpoints?: string[];
+  endpoints?: Array<string | RoutingEndpointConfig>;
   totalTimeoutMs?: number;
   perEndpointTimeoutMs?: number;
   fetchImplementation?: typeof fetch;
+  onDelivery?: (delivery: "primary" | "fallback", endpointUrl: string) => void;
+  accessPreference?: RouteAccessPreference;
+}
+
+type RouteDeliverySource = "none" | "local-loopback" | "configured-primary" | "configured-fallback";
+
+function routeDeliverySource(role: "primary" | "fallback", endpointUrl: string): RouteDeliverySource {
+  const hostname = new URL(endpointUrl).hostname;
+  return role === "primary" && (hostname === "127.0.0.1" || hostname === "localhost")
+    ? "local-loopback"
+    : role === "primary"
+      ? "configured-primary"
+      : "configured-fallback";
 }
 
 /**
@@ -98,8 +118,17 @@ export async function fetchWalkingRoutesWithFallback(
   clientSignal: AbortSignal,
   options: RoutingAttemptOptions = {},
 ): Promise<WalkingRoute[] | null> {
-  const endpoints = [...new Set(options.endpoints ?? routingEndpoints())]
-    .filter(isSafeRoutingEndpoint);
+  const endpointCandidates = options.endpoints ?? routingEndpoints();
+  const endpointUrls = new Set<string>();
+  const endpoints = endpointCandidates
+    .map((endpoint, index): RoutingEndpointConfig => typeof endpoint === "string"
+      ? { url: endpoint, role: index === 0 ? "primary" : "fallback", headers: {} }
+      : endpoint)
+    .filter((endpoint) => {
+      if (!isSafeRoutingEndpoint(endpoint.url) || endpointUrls.has(endpoint.url)) return false;
+      endpointUrls.add(endpoint.url);
+      return true;
+    });
   const totalTimeoutMs = options.totalTimeoutMs ?? TOTAL_UPSTREAM_TIMEOUT_MS;
   const perEndpointTimeoutMs = options.perEndpointTimeoutMs ?? PER_ENDPOINT_TIMEOUT_MS;
   const fetchImplementation = options.fetchImplementation ?? fetch;
@@ -111,8 +140,9 @@ export async function fetchWalkingRoutesWithFallback(
   else clientSignal.addEventListener("abort", abortForClient, { once: true });
 
   try {
-    for (const upstream of endpoints) {
+    for (const endpoint of endpoints) {
       if (totalController.signal.aborted) break;
+      const upstream = endpoint.url;
       const remainingMs = deadline - Date.now();
       if (remainingMs <= 0) break;
 
@@ -133,10 +163,14 @@ export async function fetchWalkingRoutesWithFallback(
             headers: {
               "Content-Type": "application/json",
               "X-Client-Id": "shaderoute-hackathon",
+              ...endpoint.headers,
             },
             body: JSON.stringify({
               locations: [origin, destination],
               costing: "pedestrian",
+              ...(options.accessPreference === "avoid-known-steps"
+                ? { costing_options: { pedestrian: { step_penalty: 43_200 } } }
+                : {}),
               alternates: 2,
               units: "kilometers",
               language: "en-GB",
@@ -145,7 +179,7 @@ export async function fetchWalkingRoutesWithFallback(
           attemptController.signal,
         );
         if (!response.ok) continue;
-        return compactValhallaResponse(
+        const routes = compactValhallaResponse(
           await raceWithAbort(
             readBoundedJson(response, MAX_UPSTREAM_RESPONSE_BYTES),
             attemptController.signal,
@@ -153,6 +187,8 @@ export async function fetchWalkingRoutesWithFallback(
           area.id,
           { origin, destination, bbox: area.bbox },
         );
+        options.onDelivery?.(endpoint.role, endpoint.url);
+        return routes;
       } catch {
         if (totalController.signal.aborted) break;
         // A configured independent endpoint may still provide a valid response.
@@ -169,52 +205,131 @@ export async function fetchWalkingRoutesWithFallback(
 }
 
 export async function POST(request: Request) {
-  let body: unknown;
+  const startedAt = performance.now();
+  const admission = routeRequestGate.tryEnter();
+  if (!admission.allowed) {
+    emitRouteOperationalEvent({
+      areaId: "unknown",
+      outcome: "busy",
+      delivery: "none",
+      durationMs: performance.now() - startedAt,
+      statusCode: 429,
+      routeCount: 0,
+    });
+    return privateError(
+      "ROUTE_BUSY",
+      "Walking routing is busy. Wait briefly and try again, or use a pilot journey.",
+      429,
+      true,
+      { "Retry-After": String(admission.retryAfterSeconds) },
+    );
+  }
+
+  let areaId: RouteOperationalArea = "unknown";
+  let outcome: RouteOperationalOutcome = "unavailable";
+  let delivery: RouteOperationalDelivery = "none";
+  let deliverySource: RouteDeliverySource = "none";
+  let statusCode = 500;
+  let routeCount = 0;
+
   try {
-    body = await readBoundedJson(request, MAX_REQUEST_BYTES);
-  } catch (error) {
-    if (error instanceof BoundedJsonError && error.code === "payload_too_large") {
+    let body: unknown;
+    try {
+      body = await readBoundedJson(request, MAX_REQUEST_BYTES);
+    } catch (error) {
+      if (error instanceof BoundedJsonError && error.code === "payload_too_large") {
+        outcome = "invalid_request";
+        statusCode = 413;
+        return privateError(
+          "REQUEST_TOO_LARGE",
+          "The route request is too large. Choose the two points again.",
+          413,
+        );
+      }
+      outcome = "invalid_request";
+      statusCode = 400;
       return privateError(
-        "REQUEST_TOO_LARGE",
-        "The route request is too large. Choose the two points again.",
-        413,
+        "INVALID_REQUEST",
+        "The route request was not valid JSON.",
+        400,
       );
     }
-    return privateError(
-      "INVALID_REQUEST",
-      "The route request was not valid JSON.",
-      400,
-    );
-  }
 
-  if (!isRecord(body) || !validPoint(body.origin) || !validPoint(body.destination)) {
-    return privateError(
-      "INVALID_POINTS",
-      "Choose a valid start and destination.",
-      400,
-    );
-  }
+    if (!isRecord(body) || !validPoint(body.origin) || !validPoint(body.destination)) {
+      outcome = "invalid_request";
+      statusCode = 400;
+      return privateError(
+        "INVALID_POINTS",
+        "Choose a valid start and destination.",
+        400,
+      );
+    }
 
-  const area = areaForPoints(body.origin, body.destination);
-  if (!area) {
-    return privateError(
-      "OUTSIDE_PILOT_AREA",
-      "Both points must be inside the same ShadeRoute pilot area.",
-      400,
-    );
-  }
+    const accessPreference = body.accessPreference ?? "standard";
+    if (!isRouteAccessPreference(accessPreference)) {
+      outcome = "invalid_request";
+      statusCode = 400;
+      return privateError(
+        "INVALID_ACCESS_PREFERENCE",
+        "Choose a valid walking access preference.",
+        400,
+      );
+    }
 
-  const routes = await fetchWalkingRoutesWithFallback(
-    body.origin,
-    body.destination,
-    area,
-    request.signal,
-  );
-  if (routes) return privateJson({ areaId: area.id, routes });
-  return privateError(
-    "ROUTING_UNAVAILABLE",
-    "Walking routes are temporarily unavailable. Try again or use a pilot journey.",
-    503,
-    true,
-  );
+    const area = areaForPoints(body.origin, body.destination);
+    if (!area) {
+      outcome = "outside_pilot";
+      statusCode = 400;
+      return privateError(
+        "OUTSIDE_PILOT_AREA",
+        "Both points must be inside the same ShadeRoute pilot area.",
+        400,
+      );
+    }
+    areaId = area.id;
+
+    const routes = await fetchWalkingRoutesWithFallback(
+      body.origin,
+      body.destination,
+      area,
+      request.signal,
+      {
+        accessPreference,
+        onDelivery: (value, endpointUrl) => {
+          delivery = value;
+          deliverySource = routeDeliverySource(value, endpointUrl);
+        },
+      },
+    );
+    if (routes) {
+      outcome = "success";
+      statusCode = 200;
+      routeCount = routes.length;
+      return privateJson(
+        { areaId: area.id, routes },
+        200,
+        {
+          "X-ShadeRoute-Route-Delivery": delivery,
+          "X-ShadeRoute-Route-Provider": deliverySource,
+        },
+      );
+    }
+    statusCode = 503;
+    return privateError(
+      "ROUTING_UNAVAILABLE",
+      "Walking routes are temporarily unavailable. Try again or use a pilot journey.",
+      503,
+      true,
+    );
+  } finally {
+    emitRouteOperationalEvent({
+      areaId,
+      outcome,
+      delivery,
+      durationMs: performance.now() - startedAt,
+      statusCode,
+      routeCount,
+    });
+    admission.release();
+  }
 }

@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
 import { Geist } from "next/font/google";
 import "./globals.css";
@@ -12,6 +12,11 @@ const title = "ShadeRoute — less direct sun on foot";
 const description =
   "Compare walking time with estimated direct-sun exposure on two London hospital corridors.";
 
+export const viewport: Viewport = {
+  themeColor: "#075f56",
+  colorScheme: "light",
+};
+
 export async function generateMetadata(): Promise<Metadata> {
   const requestHeaders = await headers();
   const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "localhost:3000";
@@ -23,7 +28,21 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title,
     description,
-    icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
+    applicationName: "ShadeRoute",
+    manifest: "/manifest.webmanifest",
+    appleWebApp: {
+      capable: true,
+      statusBarStyle: "default",
+      title: "ShadeRoute",
+    },
+    icons: {
+      icon: [
+        { url: "/favicon.svg", type: "image/svg+xml" },
+        { url: "/app-icon-192.png", sizes: "192x192", type: "image/png" },
+      ],
+      shortcut: "/favicon.svg",
+      apple: { url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" },
+    },
     openGraph: {
       type: "website",
       title,

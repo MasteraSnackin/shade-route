@@ -233,6 +233,7 @@ test("a timed-out primary leaves time for an independent routing fallback", { ti
     0,
   );
   const calls = [];
+  let delivery = null;
   const fetchImplementation = (url, init) => {
     calls.push(url);
     if (url.includes("primary")) {
@@ -256,12 +257,46 @@ test("a timed-out primary leaves time for an independent routing fallback", { ti
       totalTimeoutMs: 200,
       perEndpointTimeoutMs: 20,
       fetchImplementation,
+      onDelivery: (value) => { delivery = value; },
     },
   );
 
   assert.deepEqual(calls, ["https://primary.test/route", "https://fallback.test/route"]);
   assert.equal(routes?.length, 1);
   assert.deepEqual(routes?.[0].coordinates, BASE);
+  assert.equal(delivery, "fallback");
+});
+
+test("an avoid-steps preference uses Valhalla's bounded pedestrian step penalty", async () => {
+  const geometryDistance = BASE.slice(1).reduce(
+    (sum, coordinate, index) => sum + haversineMetres(BASE[index], coordinate),
+    0,
+  );
+  let upstreamBody;
+  const routes = await fetchWalkingRoutesWithFallback(
+    { lon: START[0], lat: START[1] },
+    { lon: END[0], lat: END[1] },
+    { id: "waterloo", bbox: [-0.13, 51.49, -0.1, 51.51] },
+    new AbortController().signal,
+    {
+      endpoints: ["https://primary.test/route"],
+      accessPreference: "avoid-known-steps",
+      fetchImplementation: async (_url, init) => {
+        upstreamBody = JSON.parse(init.body);
+        return Response.json({
+          trip: trip(BASE, {
+            summary: { length: geometryDistance / 1000, time: 900 },
+          }),
+        });
+      },
+    },
+  );
+
+  assert.equal(routes?.length, 1);
+  assert.deepEqual(upstreamBody.costing_options, {
+    pedestrian: { step_penalty: 43_200 },
+  });
+  assert.equal(upstreamBody.costing, "pedestrian");
 });
 
 test("a primary stalled while reading its body cannot consume the fallback budget", { timeout: 1_000 }, async () => {
@@ -365,15 +400,37 @@ test("custom route handler returns typed client errors for hostile JSON shapes a
       retryable: false,
     });
   });
+
+  await t.test("an unknown access preference fails before any routing request", async () => {
+    const response = await POST(new Request("http://localhost/api/route", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        origin: { lat: 51.5, lon: -0.12 },
+        destination: { lat: 51.5, lon: -0.118 },
+        accessPreference: "certified-step-free",
+      }),
+    }));
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      error: "Choose a valid walking access preference.",
+      code: "INVALID_ACCESS_PREFERENCE",
+      retryable: false,
+    });
+  });
 });
 
 test("custom route handler declares private responses and bounded fallback deadlines", async () => {
   const source = await readFile(new URL("../app/api/route/route.ts", import.meta.url), "utf8");
+  const configSource = await readFile(new URL("../lib/routing-config.ts", import.meta.url), "utf8");
   assert.match(source, /TOTAL_UPSTREAM_TIMEOUT_MS\s*=\s*8_000/);
   assert.match(source, /PER_ENDPOINT_TIMEOUT_MS\s*=\s*3_500/);
   assert.match(source, /const totalController = new AbortController\(\)/);
   assert.match(source, /const attemptController = new AbortController\(\)/);
   assert.match(source, /signal:\s*attemptController\.signal/);
+  assert.match(source, /X-ShadeRoute-Route-Delivery/);
+  assert.match(source, /X-ShadeRoute-Route-Provider/);
+  assert.match(source, /local-loopback/);
   assert.match(source, /raceWithAbort/);
   assert.match(source, /private, no-store/);
   assert.doesNotMatch(source, /Cache-Control[\s\S]{0,80}public/);
@@ -381,6 +438,9 @@ test("custom route handler declares private responses and bounded fallback deadl
   assert.match(source, /MAX_UPSTREAM_RESPONSE_BYTES/);
   assert.match(source, /REQUEST_TOO_LARGE/);
   assert.match(source, /ROUTING_UNAVAILABLE/);
-  assert.match(source, /VALHALLA_FALLBACK_URL/);
+  assert.match(source, /configuredRoutingEndpoints/);
+  assert.match(configSource, /VALHALLA_FALLBACK_URL/);
+  assert.match(source, /createRouteRequestGate/);
+  assert.match(source, /ROUTE_BUSY/);
   assert.match(source, /compactValhallaResponse[\s\S]+bbox:\s*area\.bbox/);
 });

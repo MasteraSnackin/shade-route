@@ -8,6 +8,8 @@ import {
   GLA_COOL_SPACES_2025_DATASET_URL,
   GLA_COOL_SPACES_2025_SOURCE,
   GLA_COOL_SPACES_CURRENT_MAP_URL,
+  GLA_PUBLIC_REALM_TREES_DATASET_URL,
+  GLA_PUBLIC_REALM_TREES_RESOURCE_URL,
   loadRouteContext,
   parseRouteContextData,
   ROUTE_CONTEXT_CATEGORIES,
@@ -43,7 +45,12 @@ test("both pilot snapshots validate with explicit provenance and per-category co
     assert.equal(parsed.areaId, areaId);
     assert.equal(parsed.source.label, "OpenStreetMap contributors");
     assert.equal(parsed.source.licence, "ODbL");
-    assert.deepEqual(parsed.additionalSources, [GLA_COOL_SPACES_2025_SOURCE]);
+    assert.equal(parsed.additionalSources.length, 2);
+    assert.deepEqual(parsed.additionalSources[0], GLA_COOL_SPACES_2025_SOURCE);
+    assert.equal(parsed.additionalSources[1].url, GLA_PUBLIC_REALM_TREES_DATASET_URL);
+    assert.equal(parsed.additionalSources[1].resourceUrl, GLA_PUBLIC_REALM_TREES_RESOURCE_URL);
+    assert.equal(parsed.additionalSources[1].licence, "Open Government Licence v3");
+    assert.match(parsed.additionalSources[1].sha256, /^[a-f0-9]{64}$/);
     assert.deepEqual(Object.keys(parsed.completeness), [...ROUTE_CONTEXT_CATEGORIES]);
     assert.equal(parsed.completeness["cool-space"].status, "partial");
     const coolSpaces = parsed.features.filter((item) => item.category === "cool-space");
@@ -57,7 +64,18 @@ test("both pilot snapshots validate with explicit provenance and per-category co
       item.details?.coolSpaceRegisterYear === 2025 &&
       (item.details.coolSpaceTier === 1 || item.details.coolSpaceTier === 2)
     )));
-    assert.ok(parsed.features.filter((item) => item.category !== "cool-space").every((item) => (
+    const publicTrees = parsed.features.filter((item) => (
+      "dataset" in item.sourceRef && item.sourceRef.dataset === "gla-public-realm-trees-2025"
+    ));
+    assert.ok(publicTrees.length > 0);
+    assert.ok(publicTrees.every((item) => (
+      item.category === "tree" &&
+      item.subtype === "public-realm-street-tree" &&
+      item.sourceRef.url === GLA_PUBLIC_REALM_TREES_DATASET_URL &&
+      item.id === `gla-public-tree-${item.sourceRef.recordId}` &&
+      item.details?.treeInventoryLocation === "Highways"
+    )));
+    assert.ok(parsed.features.filter((item) => "osmId" in item.sourceRef).every((item) => (
       "osmId" in item.sourceRef && item.id === `osm-node-${item.sourceRef.osmId}`
     )));
   }

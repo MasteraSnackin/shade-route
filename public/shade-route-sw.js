@@ -2,8 +2,8 @@
  * Pilot packs are prepared only after an explicit client message. */
 
 const PROTOCOL_VERSION = 2;
-const WORKER_VERSION = "shade-route-offline-2026-08-12-v2";
-const SUPPORTED_PACK_VERSION = "pilot-data-2026-08-12-v2";
+const WORKER_VERSION = "shade-route-offline-2026-08-15-v4";
+const SUPPORTED_PACK_VERSION = "pilot-data-2026-08-15-v4";
 const CACHE_PREFIX = "shaderoute-offline-pilot";
 const STAGING_MARKER = ":staging:";
 const READY_MARKER = ":ready:";

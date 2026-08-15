@@ -1,0 +1,75 @@
+name: Bug report
+description: Report a reproducible application fault without personal journey data.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include credentials, private addresses, patient information or precise journey history. Report security-sensitive problems through SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Provide the commit SHA, release version or deployed URL.
+    validations:
+      required: true
+  - type: dropdown
+    id: pilot
+    attributes:
+      label: Pilot area
+      options:
+        - Waterloo to St Thomas' Hospital
+        - King's Cross to UCLH
+        - Not specific to a pilot
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Use non-sensitive example locations and include the London date/time when relevant.
+      placeholder: |
+        1. Open…
+        2. Select…
+        3. Observe…
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed result
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Browser and device
+      placeholder: Safari 20 on iPhone; Firefox 145 on Linux; WebGL disabled
+    validations:
+      required: true
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Safety or privacy impact
+      options:
+        - None known
+        - Misleading route, shade, access or uncertainty information
+        - Possible exposure of journey or personal data
+        - Unsure
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I removed credentials and personal or precise journey information.
+          required: true
+        - label: I understand ShadeRoute is an uncalibrated prototype and does not certify route safety.
+          required: true

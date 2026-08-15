@@ -405,6 +405,9 @@ test("the canonical calibration sheet stays separate from operational section re
   assert.match(protocol, /does[\s\S]+not capture a device GPS observation point/i);
   assert.match(protocol, /must not be counted as fixed-point calibration observations/i);
   assert.equal(observations.trim().split("\n").length, 1);
-  assert.equal(observations.trim().split(",").length, 13);
+  assert.equal(observations.trim().split(",").length, 23);
+  assert.match(observations, /protocol_version,model_version,data_pack_version,data_pack_fingerprint/);
+  assert.match(observations, /planned_point_id,site_type/);
+  assert.match(observations, /coordinate_source,gps_accuracy_metres/);
   assert.doesNotMatch(observations, /route_id|modelled_london_datetime|include_location/);
 });

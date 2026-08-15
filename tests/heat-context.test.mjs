@@ -3,7 +3,9 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { fetchHeatContext } from "../app/api/heat-context/route.ts";
 import {
+  noActiveHeatContext,
   parseUkhsaHeatContext,
+  staleHeatContext,
   unavailableHeatContext,
   UKHSA_HEAT_METRIC,
   UKHSA_HEAT_METRIC_URL,
@@ -61,6 +63,47 @@ test("narrowly supports a camel-case beta response without relaxing field valida
   assert.equal(parsed?.regionType, "Government Office Region");
 });
 
+test("treats the documented empty UKHSA page as no active alert", () => {
+  const parsed = parseUkhsaHeatContext({
+    count: 0,
+    next: null,
+    previous: null,
+    results: [],
+  });
+
+  assert.deepEqual(parsed, {
+    status: "no_active_alert",
+    region: "London",
+    regionType: "Government Office Region",
+    metric: UKHSA_HEAT_METRIC,
+    message: "UKHSA returned no active London heat-health alert.",
+    stale: false,
+    source: {
+      label: "UKHSA data dashboard",
+      url: "https://ukhsa-dashboard.data.gov.uk/weather-health-alerts/heat/london",
+    },
+  });
+});
+
+test("does not mistake an incomplete or contradictory empty wrapper for no active alert", () => {
+  for (const value of [
+    { results: [] },
+    { count: 0, next: null, results: [] },
+    { count: 1, next: null, previous: null, results: [] },
+    { count: 0, next: "page-2", previous: null, results: [] },
+    { count: 0, next: null, previous: null, results: [record({ metric_value: "bad" })] },
+  ]) {
+    assert.equal(parseUkhsaHeatContext(value), null);
+  }
+});
+
+test("a cached no-alert result can be marked stale without becoming unavailable", () => {
+  assert.deepEqual(staleHeatContext(noActiveHeatContext()), {
+    ...noActiveHeatContext(),
+    stale: true,
+  });
+});
+
 test("rejects malformed, out-of-range and non-London upstream records", () => {
   for (const value of [
     null,
@@ -101,6 +144,20 @@ test("heat-context deadline settles when fetch ignores AbortSignal", { timeout: 
   assert.ok(performance.now() - started < 250);
 });
 
+test("fetch accepts the official empty page as a valid no-alert response", async () => {
+  const context = await fetchHeatContext({
+    fetchImplementation: async () => Response.json({
+      count: 0,
+      next: null,
+      previous: null,
+      results: [],
+    }),
+  });
+
+  assert.equal(context.status, "no_active_alert");
+  assert.equal(context.stale, false);
+});
+
 test("heat-context deadline also covers stalled response-body parsing", { timeout: 500 }, async () => {
   await assert.rejects(
     fetchHeatContext({
@@ -139,5 +196,8 @@ test("handler declares a fixed official endpoint, bounded timeout and public cac
   assert.match(component, /regional context, not a ShadeRoute route safety score/i);
   assert.match(component, /state\.kind === "loading"/);
   assert.match(component, /state\.kind === "error"/);
-  assert.match(component, /state\.kind === "available"/);
+  assert.match(component, /state\.kind === "ready"/);
+  assert.match(component, /status === "available"/);
+  assert.match(component, /status === "no_active_alert"/);
+  assert.match(component, /does not mean that an individual journey is safe/i);
 });

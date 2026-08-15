@@ -10,8 +10,9 @@ planning-support prototype: it exposes missing data and uncertainty, and it
 does not claim to measure thermal comfort, medical risk or step-free access.
 
 The design keeps the largest data packs and calculations in the browser. The
-server surface is deliberately small: one route proxy protects the routing
-service and one fail-neutral proxy caches regional UKHSA context. There is no
+server surface is deliberately small: bounded proxies protect routing and
+optional place/current-context services, while a fail-neutral proxy caches
+regional UKHSA context. There is no
 application account system or server database; saved journeys, operational
 feedback and prepared offline packs remain on the user's device.
 
@@ -48,11 +49,16 @@ flowchart LR
   UI --> Device[(LocalStorage and CacheStorage)]
 
   UI --> RouteAPI[/POST /api/route/]
+  UI --> SearchAPI[/POST /api/place-search/]
   UI --> HeatAPI[/GET /api/heat-context/]
+  UI --> CurrentAPI[/GET /api/current-context/]
+  UI --> HealthAPI[/GET /api/health/]
   UI --> Static[Bundled pilot data]
 
-  RouteAPI --> Valhalla[Primary and optional fallback Valhalla]
+  RouteAPI --> Valhalla[Controlled primary and independent fallback Valhalla]
+  SearchAPI --> Places[OS Names and Geoapify]
   HeatAPI --> UKHSA[UKHSA data API]
+  CurrentAPI --> CurrentSources[TfL and Met Office; future registered Street Manager Open Data ingestion]
   Static --> OSM[OpenStreetMap snapshots]
   Static --> EA[Environment Agency DSM and DTM]
   Static --> GLA[GLA cool-space register]
@@ -137,14 +143,40 @@ Workers are unavailable.
 **Responsibilities**
 
 - Accepts only finite start and destination coordinates inside one pilot.
+- Accepts only the bounded `standard` or `avoid-known-steps` access preference.
 - Bounds request and response sizes.
 - Uses independent per-endpoint timeouts inside a total deadline.
 - Validates geometry, summaries, endpoints, model bounds and manoeuvre indexes.
 - Deduplicates near-identical alternatives and returns at most three.
 - Returns private, non-cacheable responses with non-blaming errors.
 
-**External integration:** public FOSSGIS Valhalla by default, plus an optional
-independently configured fallback.
+**External integration:** a loopback-only Greater London Valhalla profile is
+provided under `ops/valhalla/` and is the fail-closed default. Public FOSSGIS is
+used only when deliberately configured as a local-development fallback. A public
+pilot must use a controlled primary and genuinely independent fallback.
+Credentials, if needed, are bounded server-only
+headers. A per-runtime aggregate gate limits rate and concurrency without
+retaining an IP address, user agent, coordinate or route.
+
+When `avoid-known-steps` is requested, the proxy applies Valhalla's maximum
+documented pedestrian step-transition penalty before alternatives are generated.
+This is a routing preference over mapped data, not a step-free guarantee; the
+client still inspects returned instructions and withholds access-conflicting
+suggestions.
+
+### Place-search API
+
+**Endpoint:** `POST /api/place-search`
+
+- Normalises and bounds the typed query before provider access.
+- Uses server-only OS Names and/or Geoapify credentials.
+- Filters every provider result to the exact selected pilot box.
+- Debounces client requests and preserves bundled places when online search is
+  disabled, rate-limited or unavailable.
+- Keeps responses private and caches only an opaque digest of the bounded query
+  in process memory; the raw query is not logged by ShadeRoute.
+- Keeps the current-year OS copyright/database-right statement and OS API
+  terms link, plus the `Powered by Geoapify` and OpenStreetMap links, visible.
 
 ### Heat-context API
 
@@ -152,8 +184,37 @@ independently configured fallback.
 
 The route fetches the official London UKHSA heat-health metric. A bounded server
 cache provides fresh data, then a time-limited stale fallback. When neither is
-available, it returns a neutral unavailable response; heat context never changes
-route ranking.
+available, it returns a neutral unavailable response. The documented empty page
+is a valid `no_active_alert` state rather than a provider failure. Heat context
+never changes route ranking, and no-alert copy does not promise individual safety.
+
+### Current-context API
+
+**Endpoint:** `GET /api/current-context?area=waterloo|kings-cross`
+
+All lookups use fixed corridor stations, weather points and British National
+Grid boxes rather than user endpoints. TfL can use explicitly enabled cached
+anonymous access or a server key; Met Office is disabled until its server key is
+supplied. Street Manager remains unconditionally disabled. DfT's third-party
+framework requires public-facing apps and journey-planning services to consume
+its separately registered Open Data service rather than re-serve authenticated
+GeoJSON data. That feed requires notification verification, missed-event
+reconciliation, persistent current-state ingestion and retention ownership,
+none of which this stateless prototype claims to provide. The retained future
+ingestion parser applies an inclusive current-instant-to-seven-days overlap
+filter locally, so historical and distant-future records cannot be presented as
+current context. The UI message states this external gate, says that a future
+works record would not establish pavement closure, and never feeds current
+context into route ranking.
+
+### Health and operational signals
+
+`GET /api/health` is a liveness check only and discloses no environment or
+dependency detail. Heat and route handlers emit allow-listed structured lines
+with coarse duration, outcome, delivery path, pilot ID and route count. The
+builders deliberately drop coordinates, geometry, search text, IP addresses
+and user-agent values. Public alerting, retention and incident ownership remain
+deployment responsibilities.
 
 ### Static data pipeline
 
@@ -168,6 +229,13 @@ material. It retains:
 
 Generated binary and JSON artefacts live under `public/data/` and are versioned
 with the application.
+
+`scripts/prepare-public-trees.mjs` independently refreshes the official GLA
+November 2025 public-realm tree inventory. Its strict streaming parser keeps
+only `Highways` points within each pilot plus a 250 m selection buffer, records
+the exact source hash and modification time, and can check without writing.
+These points are context only: they are not canopy polygons and never modify
+the elevation-derived shade model.
 
 ### Offline service worker
 
@@ -188,6 +256,12 @@ Records are schema-versioned, bounded and rejected rather than silently
 overwriting unknown future versions. Exports are formula-sanitised where CSV is
 used, and the decision-evidence JSON excludes exact endpoint coordinates and
 route geometry.
+
+A separate calibration store can hold up to 500 strict fixed-point records. It
+uses one explicit location reading or manually entered physical coordinates,
+requires a Europe/London observation time, freezes the model state before
+observed sun/shade controls appear, and exports the repository's versioned 23-column
+CSV schema. It is not joined to operational feedback or silently published.
 
 ## Data flow
 
@@ -252,6 +326,8 @@ joined to server-side identities because no account or server persistence exists
 ## Infrastructure and deployment
 
 - **Development:** Vinext development server and local Cloudflare bindings.
+- **Controlled local routing:** Docker Compose on loopback with a version-pinned
+  Valhalla image and Greater London Geofabrik extract.
 - **Production build:** ESM Cloudflare Worker plus static assets in `dist/`.
 - **Hosting target:** OpenAI Sites on Cloudflare-compatible infrastructure.
 - **Persistence:** D1 and R2 are deliberately unset in `.openai/hosting.json`.
@@ -271,6 +347,10 @@ status exist.
   the fallback budget.
 - Heat context uses stale-while-failing behaviour without changing route scores.
 - Offline packs are staged and promoted atomically.
+- The installable manifest is independent of verified offline readiness; an
+  installed shell is not presented as proof that a corridor pack is available.
+- Fixed synthetic requests check Valhalla readiness, application liveness and
+  both published pilot journeys without using a person's route.
 
 The current architecture is intentionally corridor-sized. UK-wide coverage would
 need tiled model packs, a controlled routing deployment and a formal data-refresh
@@ -282,6 +362,8 @@ pipeline rather than simply increasing the existing bounding boxes.
 - Only HTTPS routing endpoints are accepted, except loopback URLs for local tests.
 - Route API responses use `private, no-store` headers.
 - Exact custom coordinates are sent only when the user requests live routing.
+- Online place text is sent only after a bounded query is typed and is not
+  stored by ShadeRoute; upstream-provider retention still requires review.
 - There is no automatic server-side storage, account profile or analytics payload.
 - Local exports disclose their privacy boundary before download.
 - Data-source licences and attribution remain visible in the product.
@@ -292,19 +374,21 @@ infrastructure logs, dependency review and legal review of operational claims.
 
 ## Observability
 
-Current observability is deliberately modest:
+Current observability is deliberately privacy-bounded:
 
 - User-visible states distinguish loading, recoverable failure, success and
   limited confidence.
 - API status codes separate validation (`400`) from temporary upstream failure
   (`503`).
 - Deterministic tests cover parsers, bounds, timeouts, cancellation and model logic.
-- Browser-console failures are limited to developer diagnostics where the UI has
-  already degraded safely.
+- Fixed synthetic checks cover local router/application readiness and both
+  public pilot endpoint pairs.
+- Route and UKHSA handlers emit structured allow-listed event lines without
+  journey coordinates or persistent user identifiers.
 
-There is no central metrics, tracing or alerting service. Before a public pilot,
-add privacy-bounded request latency, routing fallback, worker-failure and offline
-verification metrics without recording journey coordinates.
+There is no central metrics backend, dashboard or alert receiver. Before a
+public pilot, connect the existing records to a bounded-retention sink and add
+worker/offline-integrity counters, an incident owner and a tested rollback path.
 
 ## Design decisions and trade-offs
 
@@ -324,6 +408,7 @@ verification metrics without recording journey coordinates.
 2. Replace repeated directional ray work with validated horizon-angle tiles where
    benchmarks show a material benefit.
 3. Add per-cell survey epoch and change masks so coverage includes freshness.
-4. Add controlled self-hosted routing and privacy-bounded operational telemetry.
+4. Put the controlled router and privacy-bounded operational events under a
+   named service owner with an independent fallback and alerting.
 5. Tile and stream data packs before expanding beyond the two pilots.
 6. Add independent real-device, assistive-technology and security testing.

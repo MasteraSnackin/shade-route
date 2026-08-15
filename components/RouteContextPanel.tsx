@@ -5,6 +5,7 @@ import {
   buildRouteContextSummary,
   GLA_COOL_SPACES_2025_DATASET_URL,
   GLA_COOL_SPACES_CURRENT_MAP_URL,
+  GLA_PUBLIC_REALM_TREES_DATASET_URL,
   LONDON_DATASTORE_TERMS_URL,
   loadRouteContext,
   type RouteContextAreaId,
@@ -27,7 +28,7 @@ const CATEGORY_LABELS: Record<RouteContextCategory, string> = {
   "drinking-water": "Drinking water",
   toilet: "Toilets",
   rest: "Benches and rest points",
-  tree: "Individual trees",
+  tree: "Recorded tree points",
 };
 
 type LoadState =
@@ -53,7 +54,8 @@ function routePosition(percent: number) {
 function detailPhrases(feature: RouteContextFeature) {
   const details = feature.details;
   if (!details) return [];
-  const isGlaCoolSpace = "dataset" in feature.sourceRef;
+  const isGlaCoolSpace = "dataset" in feature.sourceRef &&
+    feature.sourceRef.dataset === "gla-cool-spaces-2025";
   const recordLabel = isGlaCoolSpace ? "the 2025 GLA register" : "OpenStreetMap";
   const phrases: string[] = [];
   if (details.coolSpaceTier) phrases.push(`Tier ${details.coolSpaceTier} in the 2025 GLA register`);
@@ -71,6 +73,11 @@ function detailPhrases(feature: RouteContextFeature) {
     phrases.push(`not wheelchair accessible in ${recordLabel}`);
   }
   if (details.backrest === "yes") phrases.push("backrest recorded");
+  if (details.treeSpecies) phrases.push(`inventory species: ${details.treeSpecies}`);
+  if (details.treeMaintainer) phrases.push(`inventory maintainer: ${details.treeMaintainer}`);
+  if (details.treeInventoryLocation === "Highways") {
+    phrases.push("classified as Highways in the GLA inventory");
+  }
   if (details.level) phrases.push(`level ${details.level}`);
   if (details.checkDate) phrases.push(`checked ${details.checkDate}`);
   if (details.notes) phrases.push(...details.notes);
@@ -78,9 +85,13 @@ function detailPhrases(feature: RouteContextFeature) {
 }
 
 function sourceDescription(source: RouteContextSource) {
-  return source.url === GLA_COOL_SPACES_2025_DATASET_URL
-    ? `local extract captured ${sourceDate(source.snapshotAt)}`
-    : `snapshot ${sourceDate(source.snapshotAt)}`;
+  if (source.url === GLA_COOL_SPACES_2025_DATASET_URL) {
+    return `local extract captured ${sourceDate(source.snapshotAt)}`;
+  }
+  if (source.url === GLA_PUBLIC_REALM_TREES_DATASET_URL) {
+    return `source file last modified ${sourceDate(source.snapshotAt)}`;
+  }
+  return `snapshot ${sourceDate(source.snapshotAt)}`;
 }
 
 export function RouteContextPanel({
@@ -134,8 +145,9 @@ export function RouteContextPanel({
       {currentState.kind === "available" && summary ? (
         <>
           <p>
-            GLA 2025 cool-space and OpenStreetMap records within {summary.radiusMetres} m
-            straight-line of the route. Records are partial and availability is not live.
+            GLA 2025 cool-space, GLA street-tree inventory and OpenStreetMap records within
+            {` ${summary.radiusMetres} m`} straight-line of the route. Records are partial and
+            availability is not live.
           </p>
           <div className="route-context-panel__categories">
             {summary.categories.map(({ category, completeness, matches, additionalMatchCount }) => (
@@ -173,7 +185,9 @@ export function RouteContextPanel({
                       ? "Not collected for this pilot."
                       : category === "cool-space"
                         ? "No nearby site in the local 2025 GLA extract; check the live GLA map for the current scheme."
-                        : "No nearby record in this partial snapshot; this is not evidence that none exists."}
+                        : category === "tree"
+                          ? "No nearby point in these partial tree inventories; this is not evidence that no tree exists."
+                          : "No nearby record in this partial snapshot; this is not evidence that none exists."}
                   </p>
                 )}
                 {additionalMatchCount > 0 ? (
@@ -199,8 +213,11 @@ export function RouteContextPanel({
             licence; reuse follows the <a href={LONDON_DATASTORE_TERMS_URL} target="_blank" rel="noreferrer">
               London Datastore terms
             </a>. The GLA cannot warrant the source data&apos;s quality or accuracy, and its use
-            here does not imply GLA endorsement, affiliation, support or approval. Individual
-            tree records do not establish canopy or usable shade.
+            here does not imply GLA endorsement, affiliation, support or approval. GLA
+            public-realm tree records shown here are inventory points classified as Highways;
+            they may be dated or incomplete and do not establish a current tree. Inventory
+            points do not establish canopy or usable shade. OpenStreetMap individual-tree
+            records have the same shade limitation.
           </p>
         </>
       ) : null}

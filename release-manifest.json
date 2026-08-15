@@ -1,0 +1,680 @@
+{
+  "schemaVersion": 2,
+  "release": {
+    "name": "ShadeRoute",
+    "version": "0.1.0",
+    "channel": "pre-release",
+    "runtime": {
+      "node": "24.14.0",
+      "npm": "11.9.0"
+    },
+    "dependencyLock": {
+      "path": "package-lock.json",
+      "bytes": 310400,
+      "sha256": "67557497b5fa87f70ff7ddadbba8fd86522789b539d8410d403c17bf13169371"
+    }
+  },
+  "application": {
+    "inventoryVersion": 1,
+    "files": [
+      {
+        "path": ".openai/hosting.json",
+        "bytes": 31,
+        "sha256": "d532abb65cf9ae20634b464d954cb4a08a0de9f3cd3cdf7f9c3ec8948826d947"
+      },
+      {
+        "path": "app/api/current-context/route.ts",
+        "bytes": 853,
+        "sha256": "819b3486dbff5fbb87a72b8f5b78378dc066eef73c102c5505960270a824588e"
+      },
+      {
+        "path": "app/api/health/route.ts",
+        "bytes": 418,
+        "sha256": "ca56f0ba8f6ccaeff678910e6fbabab1c3e8b36f72dd2da1c28c3823f7cd6218"
+      },
+      {
+        "path": "app/api/heat-context/route.ts",
+        "bytes": 4126,
+        "sha256": "838966edf5d1cedf7d46c2ab6dbd402498b59b40b5be22ecd6420d85ab9878d3"
+      },
+      {
+        "path": "app/api/place-search/route.ts",
+        "bytes": 6684,
+        "sha256": "75da7e1fcc663220412a3e932f1282ef368b896357bfa6a5f293c7cd0444c7c7"
+      },
+      {
+        "path": "app/api/route/route.ts",
+        "bytes": 10910,
+        "sha256": "0da523b1d62cb0e38f1669f3f07605329ab3dd06c55837c57bb1dd411dfe5a06"
+      },
+      {
+        "path": "app/chatgpt-auth.ts",
+        "bytes": 2550,
+        "sha256": "4265a2e7c2dcb3a6f4b7026f762bf5b6e4caec76cc13c0a45987ee9a9f2e42cc"
+      },
+      {
+        "path": "app/globals.css",
+        "bytes": 60270,
+        "sha256": "ce88752b8cc1a9d314ae2e9aa2fd7f96d29840dd4aaad609f3ee4447d681586d"
+      },
+      {
+        "path": "app/layout.tsx",
+        "bytes": 2031,
+        "sha256": "1ce5acb44864536e39800b326bc3fe31910437d7317459ac3bed69ad81c840f1"
+      },
+      {
+        "path": "app/manifest.ts",
+        "bytes": 1569,
+        "sha256": "0531b05fc057d6598cf741a1fcde5afedf747dea15eb067b18e93a459a867b40"
+      },
+      {
+        "path": "app/page.tsx",
+        "bytes": 125,
+        "sha256": "9f27c91bbdc88a78ed1311e3a020e2e3614838533ed6435c5e1847b4cbb52a9f"
+      },
+      {
+        "path": "build/sites-vite-plugin.ts",
+        "bytes": 1254,
+        "sha256": "81b7cbfaeb970611572256aba0e313425beb3809f6426f63750696c15d9c756b"
+      },
+      {
+        "path": "components/CalibrationObserver.module.css",
+        "bytes": 4424,
+        "sha256": "06543e9eee71a2498b4059e449a00ebe3b94f3456f5399c972da563b8018232c"
+      },
+      {
+        "path": "components/CalibrationObserver.tsx",
+        "bytes": 34137,
+        "sha256": "0a9b42e254dd00daaaef787ddac2af46dd1231c3865e81d9c17e82f52ed80f92"
+      },
+      {
+        "path": "components/CalibrationObserverRouteWalks.module.css",
+        "bytes": 3048,
+        "sha256": "ea32a2094b8ebb131d3db21abe80f4bac4f7af36d9a41e63b8550f783abf35fb"
+      },
+      {
+        "path": "components/CalibrationObserverRouteWalks.tsx",
+        "bytes": 7290,
+        "sha256": "84947cecf3d37b0dbaa9f9f9666d62464f792e9557f3bca58b7d00c44120b912"
+      },
+      {
+        "path": "components/CurrentJourneyContext.module.css",
+        "bytes": 2580,
+        "sha256": "f506f4a163110c75e25e06d86ba754c1706df20c27524f3e65eb3b3aaa970d42"
+      },
+      {
+        "path": "components/CurrentJourneyContext.tsx",
+        "bytes": 7143,
+        "sha256": "38f72886d371d0ab1cf534d868d6fd7c61ba7c3d54e67031cbc346dd5702c250"
+      },
+      {
+        "path": "components/DecisionEvidenceDownload.tsx",
+        "bytes": 3132,
+        "sha256": "27399c66168ac15095d7f76dc1f707b036cae9a7e6e9364941b258cc7c4fb54b"
+      },
+      {
+        "path": "components/DepartureAdvice.tsx",
+        "bytes": 5083,
+        "sha256": "2b53ea7bedff54b6186d1602ec3f92bbd5b3b3da9c00577218a7fc20fb3cdb30"
+      },
+      {
+        "path": "components/FieldFeedback.tsx",
+        "bytes": 17736,
+        "sha256": "f89a12c923e0173553526b37e452afeb9303e767b84e3c05a5ac83028c1426ef"
+      },
+      {
+        "path": "components/HeatContext.tsx",
+        "bytes": 4226,
+        "sha256": "11dc59a4c06ccf9200c68e76b60f30d7d03772de6cd8b26128005c2783ade84d"
+      },
+      {
+        "path": "components/JourneyMode.tsx",
+        "bytes": 16877,
+        "sha256": "7e145a15af5c75914f5908e2d86bc5a53247bfc9cdcfa2dd34e80b571584a1f0"
+      },
+      {
+        "path": "components/LocalPlaceSearch.tsx",
+        "bytes": 13135,
+        "sha256": "25a41d6c268f2f4e8f2b33fa299ab5b14469fdfaf491a235c28b435f5493012c"
+      },
+      {
+        "path": "components/OfflinePilotPreparation.module.css",
+        "bytes": 2967,
+        "sha256": "7e7005f1e1346a1a82da8ec3cab31b26bf4f9e27ae5f8d16a73905ee43530c7b"
+      },
+      {
+        "path": "components/OfflinePilotPreparation.tsx",
+        "bytes": 18731,
+        "sha256": "7e34cb55a48dd0d32fd76ef9abeeb1a20a2db007e401bfc681c407891817834e"
+      },
+      {
+        "path": "components/RouteContextPanel.tsx",
+        "bytes": 9683,
+        "sha256": "80eae7f0d03798cd750b91150936494f5265bda3a94288ed77e3c5ac7d9a442a"
+      },
+      {
+        "path": "components/RouteMap.tsx",
+        "bytes": 44763,
+        "sha256": "fe54b3cd9d02f2a29fe6853effd4367538b5c16d197b7b9808641a175bc82072"
+      },
+      {
+        "path": "components/SavedJourneys.tsx",
+        "bytes": 7926,
+        "sha256": "ee6872534cbc7c074e88d1ae22745cdbb1169d331e41bd9c8f19de850b6ad82e"
+      },
+      {
+        "path": "components/ShadeRouteApp.tsx",
+        "bytes": 90701,
+        "sha256": "b5b55c4f5500b59c619504aeb37e9c92535a2ea56b88017a6e4c63bf5315c134"
+      },
+      {
+        "path": "components/ShadeTimeExplorer.tsx",
+        "bytes": 12697,
+        "sha256": "ccafca688a8f618005af9d700eef9e1a4c0a975a81d7cb2fc02ab510ef5e9545"
+      },
+      {
+        "path": "components/ShiftExposureTimeline.tsx",
+        "bytes": 4844,
+        "sha256": "5c56d7bb5f019708c24d3647828c729759516ad0060042f64209bae04546810d"
+      },
+      {
+        "path": "lib/abort-race.ts",
+        "bytes": 925,
+        "sha256": "0d2c6e25609f278c3327a0f83f571900981b5793ca6c7f2b9c455c04a8ba1947"
+      },
+      {
+        "path": "lib/bounded-json.ts",
+        "bytes": 2926,
+        "sha256": "8017d536903571a96ebc18cfb9e6d44ffd33392effd2348cd2e755763f32b815"
+      },
+      {
+        "path": "lib/current-context-server.ts",
+        "bytes": 7518,
+        "sha256": "98fd1ee33029d8d94fe8bd43a00f264202fd9865ffdb84978de7d094b736fdea"
+      },
+      {
+        "path": "lib/current-context.ts",
+        "bytes": 28749,
+        "sha256": "59aa9c029e7ec28379891ad4de48452c04e3dfdd63e76c86904ca3529a33a8c4"
+      },
+      {
+        "path": "lib/decision-evidence.ts",
+        "bytes": 32148,
+        "sha256": "b743b2d0454e1b4a27c4fe284caa0295e2a897f2056e2d48afd69c2a07c22d33"
+      },
+      {
+        "path": "lib/departure-advice.ts",
+        "bytes": 11726,
+        "sha256": "d28c3402f0879dabbb066861607aec3f92ca85686c2dd70600575ff103bb1af3"
+      },
+      {
+        "path": "lib/field-calibration.ts",
+        "bytes": 31490,
+        "sha256": "02e97dfb1d90b5d19cf5dd279ae9d26d8a8d9d778d2a27b3d7c99f23f0d4f4fd"
+      },
+      {
+        "path": "lib/fixed-point-analysis.ts",
+        "bytes": 21416,
+        "sha256": "cf9c6539bff9656666fab0045638421a659eac1474dfd90ddabb1f1bbcc53b7c"
+      },
+      {
+        "path": "lib/ground-shadow-overlay.ts",
+        "bytes": 2243,
+        "sha256": "d110f2a0454a2e99ab652f57218ca532964f0bcc3df212fca74e38adf8ad4e4f"
+      },
+      {
+        "path": "lib/heat-context.ts",
+        "bytes": 5623,
+        "sha256": "2229ee6289cdf2a923a34aa849bfb06fbf42e67b766690b658617cb17fe465bf"
+      },
+      {
+        "path": "lib/journey-mode.ts",
+        "bytes": 16325,
+        "sha256": "d3f468cd0be744b7abdabbea15cb8dbb3bbe1546546730db108b05964b7c7426"
+      },
+      {
+        "path": "lib/live-route-client.ts",
+        "bytes": 13720,
+        "sha256": "6147eba192a750edd2f89fabb6d4766001fbe3ecc693655d10e24428e0293657"
+      },
+      {
+        "path": "lib/local-journeys.ts",
+        "bytes": 21619,
+        "sha256": "89308f776c4b5e22c40373c485caeddbe06c6ee85636b6eb6fc6325877140433"
+      },
+      {
+        "path": "lib/london-time.ts",
+        "bytes": 4643,
+        "sha256": "82fb9afcfa0113319428e5d2fb7e3b303ce841dc4d0aa5d6dd50d74192423fd4"
+      },
+      {
+        "path": "lib/offline-pilot.ts",
+        "bytes": 20506,
+        "sha256": "fc76f9ae4a2d6c81f7795da80f1dcd0f68e4ef569cb49d20bea861537134cec4"
+      },
+      {
+        "path": "lib/operational-events.ts",
+        "bytes": 3060,
+        "sha256": "7e53a94f3e620d6c1f5c087e960eff83f2060c6abcf320741f0f30ba0083fdc8"
+      },
+      {
+        "path": "lib/pareto-routing.ts",
+        "bytes": 8394,
+        "sha256": "4c525220a4fbb788d320694a7cece053e9ae67ec26dfb23d7fe0f64ab00bb568"
+      },
+      {
+        "path": "lib/place-search-client.ts",
+        "bytes": 2489,
+        "sha256": "e670c61a5518c99530162ecbe5643299a7dc8b6d050a115a9f79de24bb4685ef"
+      },
+      {
+        "path": "lib/place-search-contract.ts",
+        "bytes": 2062,
+        "sha256": "08ddb1cb473511ce6a7fe43e48769642db92d5d4e0507c3fdd9f1e9a1c4861b2"
+      },
+      {
+        "path": "lib/place-search.ts",
+        "bytes": 10188,
+        "sha256": "4cf58663260892939c2b726f718e1ad272fdfbb0fcb85ddb76fc308acaedfbd1"
+      },
+      {
+        "path": "lib/raster-shade.ts",
+        "bytes": 34194,
+        "sha256": "c2b62279e7ce292fda8112558c3376953f5d984b965e3d481becd7e86356e14c"
+      },
+      {
+        "path": "lib/release-identity.ts",
+        "bytes": 221,
+        "sha256": "cfac657afa81c85962800f98c314c72b3272846b9bb44fc2ebccefebc5504c7a"
+      },
+      {
+        "path": "lib/request-gate.ts",
+        "bytes": 3011,
+        "sha256": "9e8f61f0011ca2f76550495bce86178d7da97a2afb9e1f583c4e0da6c88c5e15"
+      },
+      {
+        "path": "lib/route-api-contract.ts",
+        "bytes": 471,
+        "sha256": "dbe24f8d4a088d7ccca50d6a1c41bf88296e9a215d90bae949e952e3d448564f"
+      },
+      {
+        "path": "lib/route-card-presentation.ts",
+        "bytes": 1802,
+        "sha256": "2f8506d1c2770f97efd4cfb8946f37f06bc48c2d87d32f84a3dcc47f6e6e07b6"
+      },
+      {
+        "path": "lib/route-context.ts",
+        "bytes": 29390,
+        "sha256": "36ad6846f1dd990b93366fe2fc4e1645216aa57b7a402d55facc861a744fc15c"
+      },
+      {
+        "path": "lib/route-operational-events.ts",
+        "bytes": 2823,
+        "sha256": "a0cfe0eece4a062d89cc7586af567b70e79d8c11ab309e09c7b8d1824698cc81"
+      },
+      {
+        "path": "lib/route-preferences.ts",
+        "bytes": 369,
+        "sha256": "2c01c68ed077bdd43393414ccae8ac971c6a9323839cfb89fcb44448a1ebe5e9"
+      },
+      {
+        "path": "lib/route-scoring-client.ts",
+        "bytes": 10518,
+        "sha256": "86ad2ccb37be584bd97e4b388430004a75b67997a92b56b5bde510b2e69fa48b"
+      },
+      {
+        "path": "lib/route-walk-validation.ts",
+        "bytes": 20235,
+        "sha256": "76f838337a681e3bb692c7e8f1ede6f7fb8edc764e074442e4ac400edee71714"
+      },
+      {
+        "path": "lib/routes.ts",
+        "bytes": 14496,
+        "sha256": "d9828f2bbf691347574d1db0f564462f0d81e0edd652504a6ed91cc4861062eb"
+      },
+      {
+        "path": "lib/routing-config.ts",
+        "bytes": 2209,
+        "sha256": "542893e6a5f481596f55f75eaa7209c58fc6ec11750c8552b97c5f294293244c"
+      },
+      {
+        "path": "lib/scoring-worker-protocol.ts",
+        "bytes": 7928,
+        "sha256": "56ef36fe171a114d47349efc4178a16da0b2fdf16e1ded1d3c5fdabdb3d705a1"
+      },
+      {
+        "path": "lib/shade-profile.ts",
+        "bytes": 6022,
+        "sha256": "fb33a646cc05f24eb0d2da992d90507e02caaf6c5b1fefc74ff72e80360dfe1f"
+      },
+      {
+        "path": "lib/shade.ts",
+        "bytes": 28038,
+        "sha256": "681f3d4a790322ab96ded64f6b74cc98a0e588a63cfc30321bd009723beb7d6f"
+      },
+      {
+        "path": "lib/shadow-raster.ts",
+        "bytes": 19662,
+        "sha256": "4044d07af6da4834fa60e6b4f785437475eb8e5e9bc990008dc81c917dc9c040"
+      },
+      {
+        "path": "lib/shadow-worker-protocol.ts",
+        "bytes": 7243,
+        "sha256": "0c1cfd794f9135edf94859a69d25c292e44624ea56e1012c2e7be482652d07b7"
+      },
+      {
+        "path": "lib/shift-timeline.ts",
+        "bytes": 3136,
+        "sha256": "caa31f8ff4e82b5af6c11949921008250f081d4d08816eb67aaf7983ff81be36"
+      },
+      {
+        "path": "lib/walking-pace.ts",
+        "bytes": 1307,
+        "sha256": "1fd4d37f735e7f6725aee28f3fa76e963a444c1d8fb8637ccf663003f0cebdd1"
+      },
+      {
+        "path": "next.config.ts",
+        "bytes": 133,
+        "sha256": "614bce25b089c3f19b1e17a6346c74b858034040154c6621e7d35303004767cc"
+      },
+      {
+        "path": "ops/valhalla/compose.yml",
+        "bytes": 851,
+        "sha256": "320917ddd09ca11f3fddd45859e4a7af8fa17247cd60ed39b6679dfa1f2dc4b5"
+      },
+      {
+        "path": "package.json",
+        "bytes": 2407,
+        "sha256": "7b40a907f1637c428340e2138bf4892d361b1ef8c35ad07f8a279b4efe9fefcd"
+      },
+      {
+        "path": "postcss.config.mjs",
+        "bytes": 94,
+        "sha256": "dfac7ac2d86d326a0e5adb024e7943c181393ed17a5fcb8f0315b24c7da6ddde"
+      },
+      {
+        "path": "public/app-icon-192.png",
+        "bytes": 6947,
+        "sha256": "f2be7835bf6266a7c9ea849313e5a5360bd3e0c1b07a637dbdca3b478c6b2851"
+      },
+      {
+        "path": "public/app-icon-512.png",
+        "bytes": 23274,
+        "sha256": "755396c9859a0f83223ab1fda2121ab4cf8acb0271407d67da83a20005a7a342"
+      },
+      {
+        "path": "public/app-icon-maskable-512.png",
+        "bytes": 16498,
+        "sha256": "6bb8f09c80f896a75678348d6e2add0020c9f80963d5f75d369c1749c72b611b"
+      },
+      {
+        "path": "public/app-icon-maskable.svg",
+        "bytes": 350,
+        "sha256": "0fd35c34db708af145b497d461cd71a65ae04939fc20829e3f4428653f85003e"
+      },
+      {
+        "path": "public/app-icon.svg",
+        "bytes": 360,
+        "sha256": "3d07de014faff02f1834e9deafadcf12319c3afaa6fe12ec356eed2f2190e1aa"
+      },
+      {
+        "path": "public/apple-touch-icon.png",
+        "bytes": 4396,
+        "sha256": "37ac1eb251151f5eb876ad2430be9708f0c61b42d660b8c4935c3fc99856f10b"
+      },
+      {
+        "path": "public/favicon.svg",
+        "bytes": 712,
+        "sha256": "e6d2e59b7b5bbb0342e0fb496dfc262decbfe4426bbb7b047aec8d467d1dc6f7"
+      },
+      {
+        "path": "public/file.svg",
+        "bytes": 392,
+        "sha256": "1e0ae4d1a1ddfa36752988647b731e4abf150c414d069ec83c96fb0aaeff0307"
+      },
+      {
+        "path": "public/globe.svg",
+        "bytes": 1036,
+        "sha256": "d051a8c47936990a9085693d307bb7cea1bc1b6d7ed956bcbaacf674f4ec96b9"
+      },
+      {
+        "path": "public/og-v2.png",
+        "bytes": 2335144,
+        "sha256": "5cffa1bddc77e4713f806761ea538955b79158a8dcbc6daf79733bc354213415"
+      },
+      {
+        "path": "public/og.png",
+        "bytes": 1260775,
+        "sha256": "07cdd88953ff3869b8ed4ca9fc11c3eaeecef2bea2683837f681fa5b5c0c5ff6"
+      },
+      {
+        "path": "public/shade-route-sw.js",
+        "bytes": 15308,
+        "sha256": "5e7b2ed7fbb6ad63c1cac8a93f25e14b4ceb9d45dd0893c0446da20b3bb50ef2"
+      },
+      {
+        "path": "public/window.svg",
+        "bytes": 386,
+        "sha256": "decf1cf7bb22b5c99c4857cfcd5718ce5465c4454166317589c83fc73df74b66"
+      },
+      {
+        "path": "tsconfig.json",
+        "bytes": 651,
+        "sha256": "ebcad1ef1323616871ed455ad7d577808685848e80ad5458258fce0e56b17f0e"
+      },
+      {
+        "path": "vite.config.ts",
+        "bytes": 1781,
+        "sha256": "21db9a2342e2a02dad2c592e69bedce0726d6e7e752c409eb3696860b2c71499"
+      },
+      {
+        "path": "worker/index.ts",
+        "bytes": 2935,
+        "sha256": "87c67d50608905d281c66b1536ad54b67eeb25a4ca7e10908b80676fa77c921f"
+      },
+      {
+        "path": "workers/scoring-worker.ts",
+        "bytes": 3364,
+        "sha256": "a76d6fe58c1109bf8a6da17a0c040b8ab8eff2b3f937b4fa6f4f224a2d4c4075"
+      },
+      {
+        "path": "workers/shadow-worker.ts",
+        "bytes": 2608,
+        "sha256": "7672de401a56f90debb6b3630938562c5e33d013aa14982bafdddc1bb892c1a9"
+      }
+    ]
+  },
+  "model": {
+    "name": "ShadeRoute absolute-elevation clear-sky model",
+    "version": "prototype-2026-08-15",
+    "basis": "absolute-elevation-clear-sky",
+    "files": [
+      {
+        "path": "lib/departure-advice.ts",
+        "bytes": 11726,
+        "sha256": "d28c3402f0879dabbb066861607aec3f92ca85686c2dd70600575ff103bb1af3"
+      },
+      {
+        "path": "lib/london-time.ts",
+        "bytes": 4643,
+        "sha256": "82fb9afcfa0113319428e5d2fb7e3b303ce841dc4d0aa5d6dd50d74192423fd4"
+      },
+      {
+        "path": "lib/raster-shade.ts",
+        "bytes": 34194,
+        "sha256": "c2b62279e7ce292fda8112558c3376953f5d984b965e3d481becd7e86356e14c"
+      },
+      {
+        "path": "lib/shade-profile.ts",
+        "bytes": 6022,
+        "sha256": "fb33a646cc05f24eb0d2da992d90507e02caaf6c5b1fefc74ff72e80360dfe1f"
+      },
+      {
+        "path": "lib/shade.ts",
+        "bytes": 28038,
+        "sha256": "681f3d4a790322ab96ded64f6b74cc98a0e588a63cfc30321bd009723beb7d6f"
+      },
+      {
+        "path": "lib/shadow-raster.ts",
+        "bytes": 19662,
+        "sha256": "4044d07af6da4834fa60e6b4f785437475eb8e5e9bc990008dc81c917dc9c040"
+      },
+      {
+        "path": "lib/walking-pace.ts",
+        "bytes": 1307,
+        "sha256": "1fd4d37f735e7f6725aee28f3fa76e963a444c1d8fb8637ccf663003f0cebdd1"
+      },
+      {
+        "path": "workers/scoring-worker.ts",
+        "bytes": 3364,
+        "sha256": "a76d6fe58c1109bf8a6da17a0c040b8ab8eff2b3f937b4fa6f4f224a2d4c4075"
+      },
+      {
+        "path": "workers/shadow-worker.ts",
+        "bytes": 2608,
+        "sha256": "7672de401a56f90debb6b3630938562c5e33d013aa14982bafdddc1bb892c1a9"
+      }
+    ]
+  },
+  "dataPack": {
+    "version": "pilot-data-2026-08-15-v4",
+    "generated": "2026-08-12",
+    "areas": [
+      "kings-cross",
+      "waterloo"
+    ],
+    "files": [
+      {
+        "path": "public/data/context-kings-cross.json",
+        "bytes": 2670425,
+        "sha256": "29239399ca676bdc30cc99b528f67471dfcb8a7c8908fd394fc4cd5a7058579e"
+      },
+      {
+        "path": "public/data/context-waterloo.json",
+        "bytes": 1736135,
+        "sha256": "dc9cb731bd49f5f9438c30587c8c1ccb6686e81e72cd4cd66b4f6ecf107cf9db"
+      },
+      {
+        "path": "public/data/kings-cross-heights.bin",
+        "bytes": 358125,
+        "sha256": "9c57831a951c3822a30d1f1d34339123a65bb4ff9269af9425df9871e5b76f88"
+      },
+      {
+        "path": "public/data/kings-cross-heights.json",
+        "bytes": 892,
+        "sha256": "7141f741e1a863c21a69d8509b8e2d1165204992cf6bd7381b6f3a684b5e0eae"
+      },
+      {
+        "path": "public/data/kings-cross-map.json",
+        "bytes": 5054745,
+        "sha256": "6e98e2406a52e0004dbdf54435e4aad9435fbd1ad5534c2fc385afc93937304c"
+      },
+      {
+        "path": "public/data/kings-cross-surface-max.bin",
+        "bytes": 1432500,
+        "sha256": "36fb4267c4d4475b7124ae5417b394db0bb0dfaa0b626ac3a40f4c49b9969915"
+      },
+      {
+        "path": "public/data/kings-cross-surface-min.bin",
+        "bytes": 1432500,
+        "sha256": "25e42b3cac40c91af4807749201241aad9485e0a417a8e848d0e43bc366e862e"
+      },
+      {
+        "path": "public/data/kings-cross-terrain.bin",
+        "bytes": 1432500,
+        "sha256": "6462e6fa4f437920edf52ab310552e138e4618b374507a518ff9af7f4feb813e"
+      },
+      {
+        "path": "public/data/kings-cross-validity.bin",
+        "bytes": 358125,
+        "sha256": "933ceed00b7118fc38e51836dc091313e43818fb20c9918575d1e31febdc1cf4"
+      },
+      {
+        "path": "public/data/pilot-routes.json",
+        "bytes": 43451,
+        "sha256": "f7b3342927967ffbb893bf152e59ce5325674e58497bbe8d75b1aed47ed86ce4"
+      },
+      {
+        "path": "public/data/waterloo-heights.bin",
+        "bytes": 298390,
+        "sha256": "2c0919f5c61feb72022cc8b6b5af3bdbbfe1e33d56cac037a47a6c675a6cd022"
+      },
+      {
+        "path": "public/data/waterloo-heights.json",
+        "bytes": 879,
+        "sha256": "72ac57609f2b9313c1d86adfb3f400cbc5f2eb330d08a9a49e778d1215971d96"
+      },
+      {
+        "path": "public/data/waterloo-map.json",
+        "bytes": 3346962,
+        "sha256": "2f811587c5948baaab4b362832ee34db98b04801d455a39a45b244f712a02a44"
+      },
+      {
+        "path": "public/data/waterloo-surface-max.bin",
+        "bytes": 1193560,
+        "sha256": "fa4674c54b89ce71dd528fec042477815b18aefa31da225b44ca5dded2c10a73"
+      },
+      {
+        "path": "public/data/waterloo-surface-min.bin",
+        "bytes": 1193560,
+        "sha256": "6d98e673213eb012a45bd21629b22eea3516366bd6d52b464ed0f7b7b33f2c9d"
+      },
+      {
+        "path": "public/data/waterloo-terrain.bin",
+        "bytes": 1193560,
+        "sha256": "f1fa6a4a8ead90fb77d0d9942e98da12696380098e6eaf2a93766f68b22723e3"
+      },
+      {
+        "path": "public/data/waterloo-validity.bin",
+        "bytes": 298390,
+        "sha256": "8b7855a83f296af82233f299571072217f6b19f0322cb314355321a0e9e1ab91"
+      }
+    ]
+  },
+  "validationProtocol": {
+    "fixedPoint": {
+      "protocolVersion": "model-first-fixed-point-v2",
+      "registrationStatus": "pre-specified-template-no-observations",
+      "observations": {
+        "path": "validation/observations.csv",
+        "headerColumns": 23,
+        "headerBytes": 367,
+        "headerSha256": "fe53f8e215866125fec84d8bb7611fae42193b5cc414e3bdd3383c9a6662c559",
+        "evidenceRows": 0
+      },
+      "files": [
+        {
+          "path": "lib/field-calibration.ts",
+          "bytes": 31490,
+          "sha256": "02e97dfb1d90b5d19cf5dd279ae9d26d8a8d9d778d2a27b3d7c99f23f0d4f4fd"
+        },
+        {
+          "path": "lib/fixed-point-analysis.ts",
+          "bytes": 21416,
+          "sha256": "cf9c6539bff9656666fab0045638421a659eac1474dfd90ddabb1f1bbcc53b7c"
+        },
+        {
+          "path": "validation/fixed-point-thresholds.json",
+          "bytes": 1488,
+          "sha256": "5274e98d972150d073947281b48ee6ccdce9f14bfa4e92c1058d786f7f350290"
+        }
+      ]
+    },
+    "routeWalkComparison": {
+      "template": {
+        "path": "validation/route-walks.csv",
+        "headerColumns": 20,
+        "headerBytes": 398,
+        "headerSha256": "eaca7c014d5f4fa02ad14b55609ad174bac381945a40bbaafdfa739eb40083cc",
+        "evidenceRows": 0
+      },
+      "files": [
+        {
+          "path": "lib/route-walk-validation.ts",
+          "bytes": 20235,
+          "sha256": "76f838337a681e3bb692c7e8f1ede6f7fb8edc764e074442e4ac400edee71714"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="ShadeRoute">
+  <rect width="512" height="512" fill="#075f56"/>
+  <ellipse cx="245" cy="259" rx="96" ry="149" fill="#e6f1e9" transform="rotate(38 245 259)"/>
+  <path d="M251 163 324 363" fill="none" stroke="#044b44" stroke-width="24" stroke-linecap="round"/>
+</svg>

@@ -22,7 +22,8 @@ export type RouteContextSubtype =
   | "toilet"
   | "bench"
   | "shelter"
-  | "individual-tree";
+  | "individual-tree"
+  | "public-realm-street-tree";
 
 export const OPENSTREETMAP_SOURCE_URL = "https://www.openstreetmap.org/copyright";
 export const GLA_COOL_SPACES_2025_DATASET_URL =
@@ -30,6 +31,15 @@ export const GLA_COOL_SPACES_2025_DATASET_URL =
 export const GLA_COOL_SPACES_CURRENT_MAP_URL = "https://apps.london.gov.uk/cool-spaces/";
 export const LONDON_DATASTORE_TERMS_URL =
   "https://data.london.gov.uk/about/terms-and-conditions/";
+export const GLA_PUBLIC_REALM_TREES_DATASET_URL =
+  "https://data.london.gov.uk/dataset/london-public-realm-trees-2r45m";
+export const GLA_PUBLIC_REALM_TREES_RESOURCE_URL =
+  "https://data.london.gov.uk/download/2r45m/e62a6a1f-390d-4193-ae32-3aabd9846f36/Borough_tree_list_2025Nov.csv";
+/**
+ * Bounds the build-time street-tree extract around each small pilot area. This
+ * is only a data-selection buffer; it is not a route proximity or shade claim.
+ */
+export const GLA_PUBLIC_REALM_TREE_BUFFER_METRES = 250;
 export const GLA_COOL_SPACES_2025_SOURCE = {
   label: "Greater London Authority Cool Space Data 2025",
   url: GLA_COOL_SPACES_2025_DATASET_URL,
@@ -44,6 +54,10 @@ export interface RouteContextSource {
   licence: string;
   snapshotAt: string;
   method: string;
+  /** Direct, immutable-or-versioned resource used to create the local extract. */
+  resourceUrl?: string;
+  /** SHA-256 of the exact downloaded resource, before filtering. */
+  sha256?: string;
 }
 
 export interface RouteContextCompleteness {
@@ -62,6 +76,9 @@ export interface RouteContextFeatureDetails {
   checkDate?: string;
   coolSpaceRegisterYear?: 2025;
   coolSpaceTier?: 1 | 2;
+  treeSpecies?: string;
+  treeMaintainer?: string;
+  treeInventoryLocation?: "Highways";
   notes?: string[];
 }
 
@@ -79,6 +96,11 @@ export interface RouteContextFeature {
       }
     | {
         dataset: "gla-cool-spaces-2025";
+        recordId: number;
+        url: string;
+      }
+    | {
+        dataset: "gla-public-realm-trees-2025";
         recordId: number;
         url: string;
       };
@@ -152,6 +174,7 @@ const SUBTYPES: readonly RouteContextSubtype[] = [
   "bench",
   "shelter",
   "individual-tree",
+  "public-realm-street-tree",
 ];
 const DETAIL_ENUMS = {
   access: ["yes", "customers", "private", "unknown"],
@@ -167,6 +190,7 @@ const SUBTYPE_CATEGORY: Record<RouteContextSubtype, RouteContextCategory> = {
   bench: "rest",
   shelter: "rest",
   "individual-tree": "tree",
+  "public-realm-street-tree": "tree",
 };
 const EARTH_RADIUS_METRES = 6_371_000;
 
@@ -231,6 +255,24 @@ function bboxValue(value: unknown): RouteContextData["bbox"] | null {
   return [west, south, east, north];
 }
 
+/**
+ * Expands a WGS84 bbox by an approximately metre-based, latitude-aware buffer.
+ * It is deterministic and intentionally used only for bounded source clipping.
+ */
+export function bufferRouteContextBbox(
+  bbox: RouteContextData["bbox"],
+  bufferMetres = GLA_PUBLIC_REALM_TREE_BUFFER_METRES,
+): RouteContextData["bbox"] {
+  if (!Number.isFinite(bufferMetres) || bufferMetres < 0 || bufferMetres > 1_000) {
+    throw new Error("Route-context bbox buffer must be between 0 and 1,000 metres.");
+  }
+  const [west, south, east, north] = bbox;
+  const centreLatitudeRadians = radians((south + north) / 2);
+  const latitudeDelta = bufferMetres / 111_320;
+  const longitudeDelta = bufferMetres / (111_320 * Math.max(0.1, Math.cos(centreLatitudeRadians)));
+  return [west - longitudeDelta, south - latitudeDelta, east + longitudeDelta, north + latitudeDelta];
+}
+
 function sourceValue(value: unknown): RouteContextSource | null {
   const source = objectValue(value);
   if (
@@ -239,7 +281,12 @@ function sourceValue(value: unknown): RouteContextSource | null {
     !safeHttpUrl(source.url) ||
     !nonEmptyString(source.licence, 80) ||
     !isIsoDateTime(source.snapshotAt) ||
-    !nonEmptyString(source.method, 1_000)
+    !nonEmptyString(source.method, 1_000) ||
+    (source.resourceUrl !== undefined && !safeHttpUrl(source.resourceUrl)) ||
+    (source.sha256 !== undefined && (
+      typeof source.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(source.sha256)
+    )) ||
+    ((source.resourceUrl === undefined) !== (source.sha256 === undefined))
   ) {
     return null;
   }
@@ -249,6 +296,8 @@ function sourceValue(value: unknown): RouteContextSource | null {
     licence: source.licence,
     snapshotAt: source.snapshotAt,
     method: source.method,
+    ...(source.resourceUrl === undefined ? {} : { resourceUrl: source.resourceUrl as string }),
+    ...(source.sha256 === undefined ? {} : { sha256: source.sha256 as string }),
   };
 }
 
@@ -264,6 +313,20 @@ function isGlaCoolSpaces2025Source(source: RouteContextSource) {
     source.licence === GLA_COOL_SPACES_2025_SOURCE.licence &&
     source.snapshotAt === GLA_COOL_SPACES_2025_SOURCE.snapshotAt &&
     source.method === GLA_COOL_SPACES_2025_SOURCE.method;
+}
+
+function isGlaPublicRealmTrees2025Source(source: RouteContextSource) {
+  return source.label === "Greater London Authority Public Realm Trees, November 2025" &&
+    source.url === GLA_PUBLIC_REALM_TREES_DATASET_URL &&
+    source.resourceUrl === GLA_PUBLIC_REALM_TREES_RESOURCE_URL &&
+    source.licence === "Open Government Licence v3" &&
+    typeof source.sha256 === "string" &&
+    /^[a-f0-9]{64}$/.test(source.sha256) &&
+    source.method === (
+      `Build-time extract of records classified Highways in the source inventory, clipped to each ` +
+      `pilot bounding box plus a ${GLA_PUBLIC_REALM_TREE_BUFFER_METRES} metre buffer. ` +
+      "Records are inventory points, not field-verified current trees, canopy extents or shade polygons."
+    );
 }
 
 function completenessValue(value: unknown): RouteContextCompleteness | null {
@@ -319,6 +382,15 @@ function detailsValue(value: unknown): RouteContextFeatureDetails | null | undef
     details.coolSpaceTier !== 2
   ) return null;
   if (
+    details.treeSpecies !== undefined && !nonEmptyString(details.treeSpecies, 160)
+  ) return null;
+  if (
+    details.treeMaintainer !== undefined && !nonEmptyString(details.treeMaintainer, 160)
+  ) return null;
+  if (
+    details.treeInventoryLocation !== undefined && details.treeInventoryLocation !== "Highways"
+  ) return null;
+  if (
     details.notes !== undefined &&
     (!Array.isArray(details.notes) || details.notes.some((note) => !nonEmptyString(note, 500)))
   ) {
@@ -339,6 +411,15 @@ function detailsValue(value: unknown): RouteContextFeatureDetails | null | undef
     ...(details.coolSpaceTier === undefined
       ? {}
       : { coolSpaceTier: details.coolSpaceTier as 1 | 2 }),
+    ...(details.treeSpecies === undefined
+      ? {}
+      : { treeSpecies: details.treeSpecies as string }),
+    ...(details.treeMaintainer === undefined
+      ? {}
+      : { treeMaintainer: details.treeMaintainer as string }),
+    ...(details.treeInventoryLocation === undefined
+      ? {}
+      : { treeInventoryLocation: "Highways" as const }),
     ...(details.notes === undefined ? {} : { notes: [...details.notes as string[]] }),
   };
 }
@@ -363,10 +444,6 @@ function featureValue(
 
   const coordinate = coordinateValue(feature.coordinate);
   if (!coordinate) return null;
-  const [west, south, east, north] = bbox;
-  if (coordinate[0] < west || coordinate[0] > east || coordinate[1] < south || coordinate[1] > north) {
-    return null;
-  }
 
   const sourceRef = objectValue(feature.sourceRef);
   if (!sourceRef || !safeHttpUrl(sourceRef.url)) return null;
@@ -391,24 +468,66 @@ function featureValue(
       recordId: sourceRef.recordId,
       url: sourceRef.url,
     };
+  } else if (sourceRef.dataset === "gla-public-realm-trees-2025") {
+    if (
+      typeof sourceRef.recordId !== "number" ||
+      !Number.isSafeInteger(sourceRef.recordId) ||
+      sourceRef.recordId <= 0 ||
+      sourceRef.url !== GLA_PUBLIC_REALM_TREES_DATASET_URL
+    ) return null;
+    parsedSourceRef = {
+      dataset: "gla-public-realm-trees-2025",
+      recordId: sourceRef.recordId,
+      url: sourceRef.url,
+    };
   } else {
+    return null;
+  }
+
+  const coordinateBounds = "dataset" in parsedSourceRef &&
+    parsedSourceRef.dataset === "gla-public-realm-trees-2025"
+    ? bufferRouteContextBbox(bbox)
+    : bbox;
+  const [west, south, east, north] = coordinateBounds;
+  if (coordinate[0] < west || coordinate[0] > east || coordinate[1] < south || coordinate[1] > north) {
     return null;
   }
 
   const details = detailsValue(feature.details);
   if (details === null) return null;
-  if ("dataset" in parsedSourceRef) {
+  if (
+    "dataset" in parsedSourceRef &&
+    parsedSourceRef.dataset === "gla-cool-spaces-2025"
+  ) {
     if (
       subtype !== "official-cool-space" ||
       feature.id !== `gla-cool-space-${parsedSourceRef.recordId}` ||
       details?.coolSpaceRegisterYear !== 2025 ||
-      (details.coolSpaceTier !== 1 && details.coolSpaceTier !== 2)
+      (details.coolSpaceTier !== 1 && details.coolSpaceTier !== 2) ||
+      details.treeSpecies !== undefined ||
+      details.treeMaintainer !== undefined ||
+      details.treeInventoryLocation !== undefined
+    ) return null;
+  } else if (
+    "dataset" in parsedSourceRef &&
+    parsedSourceRef.dataset === "gla-public-realm-trees-2025"
+  ) {
+    if (
+      subtype !== "public-realm-street-tree" ||
+      category !== "tree" ||
+      feature.id !== `gla-public-tree-${parsedSourceRef.recordId}` ||
+      details?.treeInventoryLocation !== "Highways" ||
+      details.coolSpaceRegisterYear !== undefined ||
+      details.coolSpaceTier !== undefined
     ) return null;
   } else if (
     subtype === "official-cool-space" ||
     feature.id !== `osm-node-${parsedSourceRef.osmId}` ||
     details?.coolSpaceRegisterYear !== undefined ||
-    details?.coolSpaceTier !== undefined
+    details?.coolSpaceTier !== undefined ||
+    details?.treeSpecies !== undefined ||
+    details?.treeMaintainer !== undefined ||
+    details?.treeInventoryLocation !== undefined
   ) {
     return null;
   }
@@ -454,8 +573,18 @@ export function parseRouteContextData(value: unknown): RouteContextData | null {
   if (
     new Set(sourceUrls).size !== sourceUrls.length ||
     !isOpenStreetMapSource(source) ||
-    validAdditionalSources.length > 1 ||
-    validAdditionalSources.some((item) => !isGlaCoolSpaces2025Source(item))
+    validAdditionalSources.length > 2 ||
+    validAdditionalSources.some((item) => (
+      !isGlaCoolSpaces2025Source(item) && !isGlaPublicRealmTrees2025Source(item)
+    )) ||
+    validAdditionalSources.some((item, index) => (
+      isGlaCoolSpaces2025Source(item) &&
+      validAdditionalSources.slice(index + 1).some(isGlaCoolSpaces2025Source)
+    )) ||
+    validAdditionalSources.some((item, index) => (
+      isGlaPublicRealmTrees2025Source(item) &&
+      validAdditionalSources.slice(index + 1).some(isGlaPublicRealmTrees2025Source)
+    ))
   ) return null;
 
   const completenessEntries = ROUTE_CONTEXT_CATEGORIES.map((category) => (
@@ -474,20 +603,28 @@ export function parseRouteContextData(value: unknown): RouteContextData | null {
   for (const feature of validFeatures) {
     const sourceId = "osmId" in feature.sourceRef
       ? `osm:${feature.sourceRef.osmId}`
-      : `gla:${feature.sourceRef.recordId}`;
+      : `${feature.sourceRef.dataset}:${feature.sourceRef.recordId}`;
     if (ids.has(feature.id) || sourceIds.has(sourceId)) return null;
     if (completeness[feature.category].status === "not-collected") return null;
     ids.add(feature.id);
     sourceIds.add(sourceId);
   }
   const hasGlaSource = validAdditionalSources.some(isGlaCoolSpaces2025Source);
-  const hasGlaFeatures = validFeatures.some((feature) => "dataset" in feature.sourceRef);
+  const hasGlaFeatures = validFeatures.some((feature) => (
+    "dataset" in feature.sourceRef && feature.sourceRef.dataset === "gla-cool-spaces-2025"
+  ));
   if (hasGlaSource !== hasGlaFeatures) return null;
   if (
     hasGlaFeatures
       ? completeness["cool-space"].status !== "partial"
       : completeness["cool-space"].status !== "not-collected"
   ) return null;
+  const hasGlaTreeSource = validAdditionalSources.some(isGlaPublicRealmTrees2025Source);
+  const hasGlaTreeFeatures = validFeatures.some((feature) => (
+    "dataset" in feature.sourceRef &&
+    feature.sourceRef.dataset === "gla-public-realm-trees-2025"
+  ));
+  if (hasGlaTreeSource !== hasGlaTreeFeatures) return null;
 
   return {
     schemaVersion: 1,

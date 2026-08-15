@@ -1,0 +1,50 @@
+{
+  "schema": "uk.shaderoute.fixed-point-threshold-plan",
+  "schema_version": 1,
+  "registration_status": "pre-specified-template-no-observations",
+  "specified_on": "2026-08-15",
+  "protocol_version": "model-first-fixed-point-v2",
+  "model_version": "prototype-2026-08-15",
+  "data_pack_version": "pilot-data-2026-08-15-v4",
+  "data_pack_fingerprints": {
+    "waterloo": "sha256-0a51dfeba49ed91d3a231270223fbcaacba86bfb73f0d230ec8032e00c6991a5",
+    "kings-cross": "sha256-1192dbdc6149685cbd47cea067d52a1b493a2d86d51b2c68a5c5036b39309f69"
+  },
+  "required_pilot_areas": [
+    "waterloo",
+    "kings-cross"
+  ],
+  "required_site_types": [
+    "open-street",
+    "building-edge",
+    "tree-canopy",
+    "street-canyon",
+    "station-approach",
+    "hospital-entrance"
+  ],
+  "time_bands": [
+    {
+      "id": "morning",
+      "start_hour_inclusive": 8,
+      "end_hour_exclusive": 11
+    },
+    {
+      "id": "solar-noon",
+      "start_hour_inclusive": 11,
+      "end_hour_exclusive": 15
+    },
+    {
+      "id": "late-afternoon",
+      "start_hour_inclusive": 15,
+      "end_hour_exclusive": 19
+    }
+  ],
+  "minimum_unique_points_per_pilot": 6,
+  "minimum_observations_per_pilot_time_band": 6,
+  "maximum_gps_accuracy_metres": 20,
+  "maximum_point_repeat_distance_metres": 25,
+  "minimum_total_eligible_observations": 36,
+  "minimum_classification_agreement_percent": 80,
+  "minimum_per_pilot_classification_agreement_percent": 75,
+  "maximum_unclassified_prediction_rate_percent": 10
+}

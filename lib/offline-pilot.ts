@@ -1,9 +1,11 @@
+import { PILOT_DATA_VERSION } from "./release-identity.ts";
+
 export type OfflinePilotAreaId = "waterloo" | "kings-cross";
 
 export const OFFLINE_PILOT_SCHEMA_VERSION = 2 as const;
 export const OFFLINE_PILOT_PROTOCOL_VERSION = 2 as const;
-export const OFFLINE_PILOT_PACK_VERSION = "pilot-data-2026-08-12-v2";
-export const OFFLINE_PILOT_WORKER_VERSION = "shade-route-offline-2026-08-12-v2";
+export const OFFLINE_PILOT_PACK_VERSION = PILOT_DATA_VERSION;
+export const OFFLINE_PILOT_WORKER_VERSION = "shade-route-offline-2026-08-15-v4";
 export const OFFLINE_PILOT_STORAGE_KEY = "shaderoute.offline-pilots.v2";
 export const OFFLINE_PILOT_SERVICE_WORKER_URL = "/shade-route-sw.js";
 
@@ -32,13 +34,33 @@ export const OFFLINE_PILOT_STATIC_ASSET_INTEGRITY: Readonly<
     byteLength: 712,
     sha256: "e6d2e59b7b5bbb0342e0fb496dfc262decbfe4426bbb7b047aec8d467d1dc6f7",
   },
+  "/app-icon.svg": {
+    byteLength: 360,
+    sha256: "3d07de014faff02f1834e9deafadcf12319c3afaa6fe12ec356eed2f2190e1aa",
+  },
+  "/app-icon-192.png": {
+    byteLength: 6_947,
+    sha256: "f2be7835bf6266a7c9ea849313e5a5360bd3e0c1b07a637dbdca3b478c6b2851",
+  },
+  "/app-icon-512.png": {
+    byteLength: 23_274,
+    sha256: "755396c9859a0f83223ab1fda2121ab4cf8acb0271407d67da83a20005a7a342",
+  },
+  "/app-icon-maskable-512.png": {
+    byteLength: 16_498,
+    sha256: "6bb8f09c80f896a75678348d6e2add0020c9f80963d5f75d369c1749c72b611b",
+  },
+  "/apple-touch-icon.png": {
+    byteLength: 4_396,
+    sha256: "37ac1eb251151f5eb876ad2430be9708f0c61b42d660b8c4935c3fc99856f10b",
+  },
   "/data/pilot-routes.json": {
     byteLength: 43_451,
     sha256: "f7b3342927967ffbb893bf152e59ce5325674e58497bbe8d75b1aed47ed86ce4",
   },
   "/data/context-waterloo.json": {
-    byteLength: 8_289,
-    sha256: "f4ee2327486a2404d338d98664ee4090e3e90a23555b9f7a105bba94ac3b50f0",
+    byteLength: 1_736_135,
+    sha256: "dc9cb731bd49f5f9438c30587c8c1ccb6686e81e72cd4cd66b4f6ecf107cf9db",
   },
   "/data/waterloo-map.json": {
     byteLength: 3_346_962,
@@ -69,8 +91,8 @@ export const OFFLINE_PILOT_STATIC_ASSET_INTEGRITY: Readonly<
     sha256: "fa4674c54b89ce71dd528fec042477815b18aefa31da225b44ca5dded2c10a73",
   },
   "/data/context-kings-cross.json": {
-    byteLength: 11_117,
-    sha256: "5456f0521586e1c856ca290fa4779da82efe0777798ca2737fa17219cce7d50a",
+    byteLength: 2_670_425,
+    sha256: "29239399ca676bdc30cc99b528f67471dfcb8a7c8908fd394fc4cd5a7058579e",
   },
   "/data/kings-cross-map.json": {
     byteLength: 5_054_745,
@@ -104,13 +126,19 @@ export const OFFLINE_PILOT_STATIC_ASSET_INTEGRITY: Readonly<
 
 /** Current selected-pilot data plus the shared route pack; excludes the generated app shell. */
 export const OFFLINE_PILOT_DATA_BYTES: Readonly<Record<OfflinePilotAreaId, number>> = {
-  waterloo: 7_577_041,
-  "kings-cross": 10_123_955,
+  waterloo: 9_304_887,
+  "kings-cross": 12_783_263,
 };
 
 const SHARED_PILOT_ASSETS = [
   "/",
   "/favicon.svg",
+  "/app-icon.svg",
+  "/app-icon-192.png",
+  "/app-icon-512.png",
+  "/app-icon-maskable-512.png",
+  "/apple-touch-icon.png",
+  "/manifest.webmanifest",
   "/data/pilot-routes.json",
 ] as const;
 
@@ -231,8 +259,90 @@ export interface OfflineWorkerFailure {
 
 export type OfflineWorkerResponse = OfflineWorkerSuccess | OfflineWorkerFailure;
 
+export interface OfflineStorageEstimate {
+  quota?: number;
+  usage?: number;
+}
+
+export interface OfflineStorageAssessment {
+  status: "unknown" | "sufficient" | "low";
+  requiredDataBytes: number;
+  availableBytes: number | null;
+}
+
 function isAreaId(value: unknown): value is OfflinePilotAreaId {
   return value === "waterloo" || value === "kings-cross";
+}
+
+/**
+ * Storage estimates are advisory because browsers may evict or deduplicate
+ * cached responses. A known free-space shortfall is surfaced before the
+ * download, but the service worker remains the authority on whether the
+ * atomic pack can actually be prepared.
+ */
+export function assessOfflinePilotStorage(
+  areaId: OfflinePilotAreaId,
+  estimate?: OfflineStorageEstimate | null,
+): OfflineStorageAssessment {
+  const requiredDataBytes = OFFLINE_PILOT_DATA_BYTES[areaId];
+  const quota = estimate?.quota;
+  const usage = estimate?.usage;
+  if (
+    typeof quota !== "number" ||
+    typeof usage !== "number" ||
+    !Number.isFinite(quota) ||
+    !Number.isFinite(usage) ||
+    quota < 0 ||
+    usage < 0 ||
+    usage > quota
+  ) {
+    return { status: "unknown", requiredDataBytes, availableBytes: null };
+  }
+  const availableBytes = Math.max(0, Math.floor(quota - usage));
+  return {
+    status: availableBytes < requiredDataBytes ? "low" : "sufficient",
+    requiredDataBytes,
+    availableBytes,
+  };
+}
+
+/** Rejects stale, cross-area and structurally invalid MessageChannel replies. */
+export function offlineWorkerResponseMatchesRequest(
+  request: OfflineWorkerRequest,
+  response: unknown,
+): response is OfflineWorkerResponse {
+  if (!response || typeof response !== "object") return false;
+  const candidate = response as Record<string, unknown>;
+  if (
+    candidate.requestId !== request.requestId ||
+    typeof candidate.ok !== "boolean" ||
+    (candidate.areaId !== undefined && candidate.areaId !== request.areaId)
+  ) return false;
+
+  if (!candidate.ok) {
+    return (candidate.type === "PACK_FAILED" || candidate.type === "PACK_MISSING") &&
+      typeof candidate.code === "string" &&
+      typeof candidate.message === "string";
+  }
+
+  const expectedType = request.type === "PREPARE_PILOT_PACK"
+    ? "PACK_PREPARED"
+    : request.type === "VERIFY_PILOT_PACK"
+      ? "PACK_VERIFIED"
+      : "PACK_REMOVED";
+  if (candidate.type !== expectedType || candidate.areaId !== request.areaId) return false;
+
+  if (candidate.type === "PACK_REMOVED") {
+    return typeof candidate.workerVersion === "string" &&
+      Number.isSafeInteger(candidate.removedCacheCount) &&
+      Number(candidate.removedCacheCount) >= 0;
+  }
+  return candidate.packVersion === OFFLINE_PILOT_PACK_VERSION &&
+    typeof candidate.workerVersion === "string" &&
+    Number.isSafeInteger(candidate.assetCount) &&
+    Number(candidate.assetCount) > 0 &&
+    typeof candidate.integrityManifestId === "string" &&
+    /^sha256-[0-9a-f]{64}$/.test(candidate.integrityManifestId);
 }
 
 function normaliseLocalAsset(value: string, origin: string) {
